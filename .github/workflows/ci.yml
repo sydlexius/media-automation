@@ -40,13 +40,13 @@ jobs:
           python-version: "3.13"
 
       - name: Verify imports
-        run: python -c "import TagExplicitLyrics"
-        working-directory: TagExplicitLyrics
+        run: python -c "import SetMusicParentalRating"
+        working-directory: SetMusicParentalRating
 
       - name: Install pytest
         run: pip install pytest
 
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
-        working-directory: TagExplicitLyrics
-        if: hashFiles('TagExplicitLyrics/tests/**') != ''
+        working-directory: SetMusicParentalRating
+        if: hashFiles('SetMusicParentalRating/tests/**') != ''

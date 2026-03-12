@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Scan sidecar lyric files for explicit content and set OfficialRating on
-matching tracks via the Emby API.
+"""SetMusicParentalRating — scan sidecar lyric files for explicit content and
+set OfficialRating on matching audio tracks via the Emby or Jellyfin API.
 
 Python 3.11+ recommended (uses tomllib from stdlib).
 On older Python, falls back to the tomli package.
@@ -101,8 +101,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class EmbyAPIError(Exception):
-    """Raised when an Emby API call fails."""
+class MediaServerError(Exception):
+    """Raised when a media server API call fails."""
 
 
 # ---------------------------------------------------------------------------
@@ -113,8 +113,9 @@ class EmbyAPIError(Exception):
 @dataclass
 class Config:
     library_path: Path
-    emby_url: str
-    emby_api_key: str
+    server_url: str
+    server_api_key: str
+    server_type: str = "emby"
     r_stems: list[str] = field(default_factory=lambda: list(DEFAULT_R_STEMS))
     r_exact: list[str] = field(default_factory=lambda: list(DEFAULT_R_EXACT))
     pg13_stems: list[str] = field(default_factory=lambda: list(DEFAULT_PG13_STEMS))
@@ -129,6 +130,10 @@ class Config:
     g_genres: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if self.server_type not in ("emby", "jellyfin"):
+            raise ValueError(
+                f"server_type must be 'emby' or 'jellyfin', got {self.server_type!r}"
+            )
         self._r_exact_patterns = _compile_exact_patterns(self.r_exact)
         self._pg13_exact_patterns = _compile_exact_patterns(self.pg13_exact)
         self.g_genres = [g.strip() for g in self.g_genres if g.strip()]
@@ -140,9 +145,11 @@ class DetectionResult:
     audio_path: Path | None
     tier: str | None  # "R", "PG-13", "G" (genre-matched), or None (clean)
     matched_words: list[str] = field(default_factory=list)
-    emby_item_id: str | None = None
-    action: str = ""  # set | cleared | skipped | already_correct | not_found_in_emby |
-    #                    emby_unavailable | error | no_audio_file | dry_run | dry_run_clear |
+    server_item_id: str | None = None
+    action: str = (
+        ""  # set | cleared | skipped | already_correct | not_found_in_server |
+    )
+    #                    server_unavailable | error | no_audio_file | dry_run | dry_run_clear |
     #                    g_genre | g_genre_already_correct | dry_run_g_genre
     previous_rating: str = ""
     artist: str = ""
@@ -158,19 +165,16 @@ def load_env(path: Path, *, required: bool = False) -> dict[str, str]:
     """Parse a .env file into a dict. Skips comments and blank lines."""
     env: dict[str, str] = {}
     if not path.is_file():
-        has_url = bool((os.environ.get("EMBY_URL") or "").strip())
-        has_key = bool((os.environ.get("EMBY_API_KEY") or "").strip())
-        if has_url and has_key:
+        has_emby = bool((os.environ.get("EMBY_URL") or "").strip()) and bool(
+            (os.environ.get("EMBY_API_KEY") or "").strip()
+        )
+        has_jellyfin = bool((os.environ.get("JELLYFIN_URL") or "").strip()) and bool(
+            (os.environ.get("JELLYFIN_API_KEY") or "").strip()
+        )
+        if has_emby or has_jellyfin:
             log.debug(
                 ".env file not found at %s (credentials provided via environment variables)",
                 path,
-            )
-        elif has_url or has_key:
-            missing = "EMBY_API_KEY" if has_url else "EMBY_URL"
-            log.warning(
-                ".env file not found at %s and %s is not set in the environment",
-                path,
-                missing,
             )
         else:
             log.warning(".env file not found at %s", path)
@@ -260,21 +264,74 @@ def build_config(args: argparse.Namespace) -> Config:
         )
         sys.exit(1)
 
-    # --- emby_url ---
-    emby_url = (
-        args.emby_url
-        or os.environ.get("EMBY_URL")
-        or env_file.get("EMBY_URL")
-        or toml.get("emby", {}).get("url", "")
+    # --- server_type (explicit override, or auto-detected from which env vars are set) ---
+    explicit_type = (
+        (
+            (getattr(args, "server_type", None) or "")
+            or os.environ.get("SERVER_TYPE", "")
+            or env_file.get("SERVER_TYPE", "")
+            or str(toml.get("general", {}).get("server_type", "") or "")
+        )
+        .lower()
+        .strip()
     )
 
-    # --- emby_api_key ---
-    emby_api_key = (
-        args.emby_api_key
-        or os.environ.get("EMBY_API_KEY")
-        or env_file.get("EMBY_API_KEY")
-        or ""
-    )
+    if explicit_type:
+        server_type = explicit_type
+    else:
+        has_emby = bool(
+            (
+                os.environ.get("EMBY_URL", "")
+                or env_file.get("EMBY_URL", "")
+                or str(toml.get("emby", {}).get("url") or "")
+            ).strip()
+        )
+        has_jellyfin = bool(
+            (
+                os.environ.get("JELLYFIN_URL", "")
+                or env_file.get("JELLYFIN_URL", "")
+                or str(toml.get("jellyfin", {}).get("url") or "")
+            ).strip()
+        )
+        if has_emby and has_jellyfin:
+            print(
+                "Error: both Emby and Jellyfin are configured; "
+                "use --server-type emby or --server-type jellyfin to select one.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        server_type = "jellyfin" if has_jellyfin else "emby"
+
+    # --- server_url / server_api_key (resolved per server_type) ---
+    cli_server_url = getattr(args, "server_url", None) or ""
+    cli_api_key = getattr(args, "api_key", None) or ""
+
+    if server_type == "jellyfin":
+        server_url = (
+            cli_server_url
+            or os.environ.get("JELLYFIN_URL", "")
+            or env_file.get("JELLYFIN_URL", "")
+            or toml.get("jellyfin", {}).get("url", "")
+        )
+        server_api_key = (
+            cli_api_key
+            or os.environ.get("JELLYFIN_API_KEY", "")
+            or env_file.get("JELLYFIN_API_KEY", "")
+            or ""
+        )
+    else:
+        server_url = (
+            cli_server_url
+            or os.environ.get("EMBY_URL", "")
+            or env_file.get("EMBY_URL", "")
+            or toml.get("emby", {}).get("url", "")
+        )
+        server_api_key = (
+            cli_api_key
+            or os.environ.get("EMBY_API_KEY", "")
+            or env_file.get("EMBY_API_KEY", "")
+            or ""
+        )
 
     # --- word lists (TOML or defaults) ---
     det = toml.get("detection", {})
@@ -293,8 +350,9 @@ def build_config(args: argparse.Namespace) -> Config:
 
     return Config(
         library_path=library_path,
-        emby_url=emby_url.rstrip("/"),
-        emby_api_key=emby_api_key,
+        server_url=server_url.rstrip("/"),
+        server_api_key=server_api_key,
+        server_type=server_type,
         r_stems=r_stems,
         r_exact=r_exact,
         pg13_stems=pg13_stems,
@@ -453,12 +511,13 @@ def match_g_genre(item: dict, g_genres: list[str]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-class EmbyClient:
-    """Minimal Emby HTTP client using urllib (stdlib)."""
+class MediaServerClient:
+    """Minimal Emby/Jellyfin HTTP client using urllib (stdlib)."""
 
-    def __init__(self, base_url: str, api_key: str) -> None:
+    def __init__(self, base_url: str, api_key: str, server_type: str = "emby") -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.server_type = server_type
         self._user_id: str | None = None
 
     def _request(
@@ -470,10 +529,13 @@ class EmbyClient:
         url = f"{self.base_url}{path}"
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
-        req.add_header("X-Emby-Token", self.api_key)
+        if self.server_type == "jellyfin":
+            req.add_header("X-MediaBrowser-Token", self.api_key)
+        else:
+            req.add_header("X-Emby-Token", self.api_key)
         req.add_header("Content-Type", "application/json")
         req.add_header("Accept", "application/json")
-        log.debug("Emby %s %s", method, url)
+        log.debug("%s %s %s", self.server_type.title(), method, url)
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 resp_data = resp.read()
@@ -481,7 +543,7 @@ class EmbyClient:
                     try:
                         return json.loads(resp_data)
                     except json.JSONDecodeError as exc:
-                        raise EmbyAPIError(
+                        raise MediaServerError(
                             f"Non-JSON response on {method} {path}: {resp_data[:200]!r}"
                         ) from exc
                 return None
@@ -491,11 +553,11 @@ class EmbyClient:
                 body_snippet = exc.read().decode("utf-8", errors="replace")[:1024]
             except Exception as inner_exc:
                 log.debug("Could not read HTTP error body: %s", inner_exc)
-            raise EmbyAPIError(
+            raise MediaServerError(
                 f"HTTP {exc.code} on {method} {path}: {body_snippet}"
             ) from exc
         except urllib.error.URLError as exc:
-            raise EmbyAPIError(
+            raise MediaServerError(
                 f"Connection error on {method} {path}: {exc.reason}"
             ) from exc
 
@@ -525,7 +587,7 @@ class EmbyClient:
             log.debug("Fetched %d / %d audio items", start_index, total)
             if start_index >= total:
                 break
-        log.info("Prefetched %d audio items from Emby", len(items_by_path))
+        log.info("Prefetched %d audio items from server", len(items_by_path))
         return items_by_path
 
     def _get_user_id(self) -> str:
@@ -533,12 +595,12 @@ class EmbyClient:
         if self._user_id is None:
             users = self._request("GET", "/Users")
             if not users:
-                raise EmbyAPIError("No users returned from /Users")
+                raise MediaServerError("No users returned from /Users")
             user_id = users[0].get("Id")
             if not user_id:
-                raise EmbyAPIError("First user has no 'Id' field")
+                raise MediaServerError("First user has no 'Id' field")
             self._user_id = user_id
-            log.debug("Using Emby user ID: %s", self._user_id)
+            log.debug("Using server user ID: %s", self._user_id)
         return self._user_id
 
     def get_item(self, item_id: str) -> dict:
@@ -546,7 +608,9 @@ class EmbyClient:
         uid = self._get_user_id()
         result = self._request("GET", f"/Users/{uid}/Items/{item_id}")
         if result is None:
-            raise EmbyAPIError(f"Empty response for GET /Users/{uid}/Items/{item_id}")
+            raise MediaServerError(
+                f"Empty response for GET /Users/{uid}/Items/{item_id}"
+            )
         return result
 
     def update_item(self, item_id: str, item_body: dict) -> None:
@@ -555,28 +619,28 @@ class EmbyClient:
         log.debug("Updated item %s", item_id)
 
     def list_genres(self) -> list[str]:
-        """Return sorted list of all Audio genre names from Emby via GET /MusicGenres?Recursive=true."""
+        """Return sorted list of all Audio genre names via GET /MusicGenres?Recursive=true."""
         result = self._request(
             "GET",
             "/MusicGenres?Recursive=true",
         )
         if result is None:
-            log.warning("list_genres: Emby returned an empty response body")
+            log.warning("list_genres: server returned an empty response body")
             return []
         if not isinstance(result, dict):
-            raise EmbyAPIError(
+            raise MediaServerError(
                 f"list_genres: unexpected response type {type(result).__name__!r}; "
                 "expected a JSON object"
             )
         items = result.get("Items")
         if items is None:
             log.warning(
-                "list_genres: Emby response missing 'Items' key; keys present: %s",
+                "list_genres: server response missing 'Items' key; keys present: %s",
                 list(result.keys()),
             )
             return []
         if not isinstance(items, list):
-            raise EmbyAPIError(
+            raise MediaServerError(
                 f"list_genres: 'Items' field is {type(items).__name__!r}, expected a list"
             )
         non_dict = sum(1 for item in items if not isinstance(item, dict))
@@ -673,7 +737,7 @@ def write_report(
 
 
 def process_library(config: Config) -> list[DetectionResult]:
-    """Main flow: scan sidecars -> detect -> update Emby."""
+    """Main flow: scan sidecars -> detect -> update media server."""
     lp = config.library_path
     if not lp.is_absolute():
         log.error("library_path must be an absolute path; got %r", str(lp))
@@ -686,19 +750,21 @@ def process_library(config: Config) -> list[DetectionResult]:
         sys.exit(1)
     pairs = scan_library(config.library_path)
 
-    # Prefetch Emby items for path matching (even in dry-run, we read but don't write)
-    emby: EmbyClient | None = None
-    emby_items: dict[str, dict] = {}
-    if config.emby_url and config.emby_api_key:
-        emby = EmbyClient(config.emby_url, config.emby_api_key)
+    # Prefetch server items for path matching (even in dry-run, we read but don't write)
+    client: MediaServerClient | None = None
+    server_items: dict[str, dict] = {}
+    if config.server_url and config.server_api_key:
+        client = MediaServerClient(
+            config.server_url, config.server_api_key, config.server_type
+        )
         try:
-            emby_items = emby.prefetch_audio_items()
-        except EmbyAPIError as exc:
-            log.error("Failed to prefetch Emby items: %s", exc)
+            server_items = client.prefetch_audio_items()
+        except MediaServerError as exc:
+            log.error("Failed to prefetch server items: %s", exc)
             log.error("Continuing in analysis-only mode")
-            emby = None
+            client = None
     else:
-        log.info("Emby URL or API key not configured; running in analysis-only mode")
+        log.info("Server URL or API key not configured; running in analysis-only mode")
 
     results: list[DetectionResult] = []
     sidecar_handled_paths: set[str] = set()
@@ -724,45 +790,58 @@ def process_library(config: Config) -> list[DetectionResult]:
             results.append(dr)
             continue
 
-        # Resolve Emby item
+        # Resolve server item
         norm_audio = _normalize_path(str(audio))
         sidecar_handled_paths.add(norm_audio)
-        emby_item = emby_items.get(norm_audio)
-        if emby_item:
-            dr.emby_item_id = emby_item.get("Id")
-            dr.previous_rating = emby_item.get("OfficialRating", "") or ""
-            dr.artist = emby_item.get("AlbumArtist", "") or ""
-            dr.album = emby_item.get("Album", "") or ""
+        server_item = server_items.get(norm_audio)
+        if server_item:
+            dr.server_item_id = server_item.get("Id")
+            dr.previous_rating = server_item.get("OfficialRating", "") or ""
+            dr.artist = server_item.get("AlbumArtist", "") or ""
+            dr.album = server_item.get("Album", "") or ""
 
         # Decide action
         if tier is not None:
             # Explicit content found — set rating
-            if emby is None:
-                dr.action = "emby_unavailable"
-            elif dr.emby_item_id is None:
-                dr.action = "not_found_in_emby"
-                log.warning("Audio file not found in Emby: %s", audio)
+            if client is None:
+                dr.action = "server_unavailable"
+            elif dr.server_item_id is None:
+                dr.action = "not_found_in_server"
+                log.warning("Audio file not found in server: %s", audio)
+            elif dr.server_item_id == "":
+                dr.action = "not_found_in_server"
+                log.error(
+                    "Server returned item for %s with empty 'Id'; cannot update", audio
+                )
             elif config.dry_run:
                 dr.action = "dry_run"
                 log.info("[DRY RUN] Would set %s on %s", tier, audio.name)
             else:
                 current_rating = (
-                    emby_item.get("OfficialRating", "") if emby_item else ""
+                    server_item.get("OfficialRating", "") if server_item else ""
                 )
                 if current_rating == tier:
                     dr.action = "already_correct"
                     log.debug("Already rated %s: %s", tier, audio.name)
                 else:
-                    dr.action = _apply_rating(emby, dr.emby_item_id, tier, audio.name)
+                    dr.action = _apply_rating(
+                        client, dr.server_item_id, tier, audio.name
+                    )
         elif config.clear:
             # Clean content + --clear flag — remove rating if set
-            if emby is None:
-                dr.action = "emby_unavailable"
-            elif dr.emby_item_id is None:
-                dr.action = "not_found_in_emby"
+            if client is None:
+                dr.action = "server_unavailable"
+            elif dr.server_item_id is None:
+                dr.action = "not_found_in_server"
+                log.warning("Audio file not found in server: %s", audio)
+            elif dr.server_item_id == "":
+                dr.action = "not_found_in_server"
+                log.error(
+                    "Server returned item for %s with empty 'Id'; cannot update", audio
+                )
             elif config.dry_run:
                 current_rating = (
-                    emby_item.get("OfficialRating", "") if emby_item else ""
+                    server_item.get("OfficialRating", "") if server_item else ""
                 )
                 if current_rating:
                     dr.action = "dry_run_clear"
@@ -771,10 +850,10 @@ def process_library(config: Config) -> list[DetectionResult]:
                     dr.action = "skipped"
             else:
                 current_rating = (
-                    emby_item.get("OfficialRating", "") if emby_item else ""
+                    server_item.get("OfficialRating", "") if server_item else ""
                 )
                 if current_rating:
-                    dr.action = _apply_rating(emby, dr.emby_item_id, "", audio.name)
+                    dr.action = _apply_rating(client, dr.server_item_id, "", audio.name)
                     if dr.action == "set":
                         dr.action = "cleared"
                 else:
@@ -785,9 +864,9 @@ def process_library(config: Config) -> list[DetectionResult]:
         results.append(dr)
 
     # --- Genre-based G rating pass ---
-    if config.g_genres and emby is not None:
+    if config.g_genres and client is not None:
         lib_root = Path(_normalize_path(str(config.library_path)))
-        for norm_path, item in emby_items.items():
+        for norm_path, item in server_items.items():
             if norm_path in sidecar_handled_paths:
                 continue
             if not Path(norm_path).is_relative_to(lib_root):
@@ -799,7 +878,8 @@ def process_library(config: Config) -> list[DetectionResult]:
             item_id = item.get("Id", "")
             if not item_id:
                 log.warning(
-                    "Genre-pass: Emby item at %s has no 'Id' field; skipping", norm_path
+                    "Genre-pass: server item at %s has no 'Id' field; skipping",
+                    norm_path,
                 )
                 continue
             dr = DetectionResult(
@@ -807,7 +887,7 @@ def process_library(config: Config) -> list[DetectionResult]:
                 audio_path=Path(norm_path),
                 tier="G",
                 matched_words=[matched_genre],
-                emby_item_id=item_id,
+                server_item_id=item_id,
                 previous_rating=current_rating,
                 artist=item.get("AlbumArtist", "") or "",
                 album=item.get("Album", "") or "",
@@ -820,7 +900,7 @@ def process_library(config: Config) -> list[DetectionResult]:
                     "[DRY RUN] Would set G on %s (genre: %s)", norm_path, matched_genre
                 )
             else:
-                dr.action = _apply_rating(emby, item_id, "G", norm_path)
+                dr.action = _apply_rating(client, item_id, "G", norm_path)
                 if dr.action == "set":
                     dr.action = "g_genre"
             results.append(dr)
@@ -836,19 +916,21 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
             "library_path must be an absolute path; got %r", str(config.library_path)
         )
         sys.exit(1)
-    if not config.emby_url or not config.emby_api_key:
+    if not config.server_url or not config.server_api_key:
         log.error(
-            "--force-rating requires an Emby URL and API key "
-            "(via --emby-url/EMBY_URL and --emby-api-key/EMBY_API_KEY, .env, or TOML config)"
+            "--force-rating requires a server URL and API key "
+            "(set EMBY_URL+EMBY_API_KEY or JELLYFIN_URL+JELLYFIN_API_KEY in .env, or use --server-url/--api-key)"
         )
         sys.exit(1)
 
     target = config.force_rating
-    emby = EmbyClient(config.emby_url, config.emby_api_key)
+    client = MediaServerClient(
+        config.server_url, config.server_api_key, config.server_type
+    )
     try:
-        all_items = emby.prefetch_audio_items()
-    except EmbyAPIError as exc:
-        log.error("Failed to prefetch Emby items: %s", exc)
+        all_items = client.prefetch_audio_items()
+    except MediaServerError as exc:
+        log.error("Failed to prefetch server items: %s", exc)
         sys.exit(1)
 
     # Filter to items under the library path (path-aware, avoids /music matching /music2)
@@ -873,39 +955,46 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
             sidecar_path=None,
             audio_path=Path(norm_path),
             tier=target,
-            emby_item_id=item_id,
+            server_item_id=item_id,
             previous_rating=current,
             artist=item.get("AlbumArtist", "") or "",
             album=item.get("Album", "") or "",
         )
-        if current == target:
+        if not item_id:
+            dr.action = "not_found_in_server"
+            log.warning(
+                "Force-rating: server item at %s has no 'Id'; skipping", norm_path
+            )
+        elif current == target:
             dr.action = "already_correct"
             log.debug("Already %s: %s", target, norm_path)
         elif config.dry_run:
             dr.action = "dry_run"
             log.info("[DRY RUN] Would set %s on %s", target, norm_path)
         else:
-            dr.action = _apply_rating(emby, item_id, target, norm_path)
+            dr.action = _apply_rating(client, item_id, target, norm_path)
         results.append(dr)
 
     return results
 
 
 def list_genres_mode(config: Config) -> None:
-    """--list-genres mode: print all Audio genre names from Emby to stdout. Exits with non-zero status on error."""
-    if not config.emby_url or not config.emby_api_key:
+    """--list-genres mode: print all Audio genre names from the server to stdout. Exits with non-zero status on error."""
+    if not config.server_url or not config.server_api_key:
         print(
-            "Error: --list-genres requires EMBY_URL and EMBY_API_KEY "
-            "(via --emby-url/--emby-api-key, environment variables, or .env file; "
-            "EMBY_URL may also be set via [emby].url in the TOML config).",
+            "Error: --list-genres requires server URL and API key "
+            "(set EMBY_URL+EMBY_API_KEY or JELLYFIN_URL+JELLYFIN_API_KEY in .env, or use --server-url/--api-key). "
+            "Use --server-type to select Emby or Jellyfin when both are configured.",
             file=sys.stderr,
         )
         sys.exit(1)
-    emby = EmbyClient(config.emby_url, config.emby_api_key)
+    client = MediaServerClient(
+        config.server_url, config.server_api_key, config.server_type
+    )
     try:
-        genres = emby.list_genres()
-    except EmbyAPIError as exc:
-        log.error("Failed to retrieve genres from Emby: %s", exc)
+        genres = client.list_genres()
+    except MediaServerError as exc:
+        log.error("Failed to retrieve genres from server: %s", exc)
         sys.exit(1)
     print("=== Audio Genres ===")
     for g in genres:
@@ -915,25 +1004,25 @@ def list_genres_mode(config: Config) -> None:
 
 
 def _apply_rating(
-    emby: EmbyClient | None,
+    client: MediaServerClient | None,
     item_id: str,
     rating: str,
     label: str,
 ) -> str:
     """GET-then-POST round-trip to set OfficialRating. Returns action string."""
-    if emby is None:
+    if client is None:
         log.error(
-            "_apply_rating called with no Emby client for %s (%s)", label, item_id
+            "_apply_rating called with no server client for %s (%s)", label, item_id
         )
         return "error"
     try:
-        full_item = emby.get_item(item_id)
+        full_item = client.get_item(item_id)
         full_item["OfficialRating"] = rating
-        emby.update_item(item_id, full_item)
+        client.update_item(item_id, full_item)
         verb = "Cleared rating from" if not rating else f"Set {rating} on"
         log.info("%s %s", verb, label)
         return "set"
-    except EmbyAPIError as exc:
+    except MediaServerError as exc:
         log.error("Failed to update %s: %s", label, exc)
         return "error"
 
@@ -945,9 +1034,9 @@ def _apply_rating(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="TagExplicitLyrics",
+        prog="SetMusicParentalRating",
         description="Scan sidecar lyric files for explicit content and set "
-        "OfficialRating on matching tracks via the Emby API.",
+        "OfficialRating on matching tracks via the Emby or Jellyfin API.",
     )
     parser.add_argument(
         "library_path",
@@ -966,20 +1055,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to .env file (default: .env in the repo root; e.g. --env-file .env.prod)",
     )
     parser.add_argument(
-        "--emby-url",
+        "--server-type",
         default=None,
-        help="Emby server URL (overrides config/.env)",
+        choices=("emby", "jellyfin"),
+        help="Media server type: 'emby' (default) or 'jellyfin'",
     )
     parser.add_argument(
-        "--emby-api-key",
+        "--server-url",
         default=None,
-        help="Emby API key (overrides .env)",
+        help="Server URL — overrides the env var for the active server type",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="API key — overrides the env var for the active server type",
     )
     parser.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
-        help="Analyze only — no Emby updates",
+        help="Analyze only — no server updates",
     )
     parser.add_argument(
         "-v",
@@ -1001,13 +1096,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--force-rating",
         default=None,
         metavar="RATING",
-        help="Bypass detection; set this rating on ALL audio tracks in the library via Emby",
+        help="Bypass detection; set this rating on ALL audio tracks in the library via the media server",
     )
     parser.add_argument(
         "--list-genres",
         action="store_true",
         help=(
-            "Connect to Emby, print all Audio genre tags, then exit. "
+            "Connect to the media server, print all Audio genre tags, then exit. "
             "Useful for populating [detection.g_genres] in the config."
         ),
     )
@@ -1041,13 +1136,13 @@ def print_summary(results: list[DetectionResult]) -> None:
         for r in sidecar_results
         if r.audio_path is not None and r.action != "no_audio_file"
     )
-    emby_matched = sum(1 for r in sidecar_results if r.emby_item_id is not None)
+    server_matched = sum(1 for r in sidecar_results if r.server_item_id)
     rated = sum(1 for r in results if r.action == "set")
     already = sum(1 for r in results if r.action == "already_correct")
     cleared = sum(1 for r in results if r.action == "cleared")
     dry = sum(1 for r in results if r.action.startswith("dry_run"))
     errors = sum(1 for r in results if r.action == "error")
-    emby_unavail = sum(1 for r in results if r.action == "emby_unavailable")
+    server_unavail = sum(1 for r in results if r.action == "server_unavailable")
     g_genre_rated = sum(1 for r in genre_results if r.action == "g_genre")
     g_genre_already = sum(
         1 for r in genre_results if r.action == "g_genre_already_correct"
@@ -1062,7 +1157,7 @@ def print_summary(results: list[DetectionResult]) -> None:
         print(f"    PG-13:             {pg13_count}")
         print(f"    Clean:             {clean}")
         print(f"  Audio files found:   {audio_found} / {total}")
-        print(f"  Emby items matched:  {emby_matched} / {audio_found}")
+        print(f"  Server items matched: {server_matched} / {audio_found}")
     print(f"  Ratings set:         {rated}")
     print(f"  Already correct:     {already}")
     print(f"  Ratings cleared:     {cleared}")
@@ -1071,8 +1166,8 @@ def print_summary(results: list[DetectionResult]) -> None:
         print(f"  Already G (genre):   {g_genre_already}")
         if g_genre_dry:
             print(f"  Dry-run G (genre):   {g_genre_dry}")
-    if emby_unavail:
-        print(f"  Emby unavailable:    {emby_unavail}")
+    if server_unavail:
+        print(f"  Server unavailable:  {server_unavail}")
     if dry:
         print(f"  Dry-run would act:   {dry}")
     print(f"  Errors:              {errors}")
@@ -1084,7 +1179,12 @@ def main() -> None:
 
     setup_logging(args.verbose)
 
-    config = build_config(args)
+    # ValueError is raised by Config.__post_init__ for invalid field values
+    # (e.g. unrecognised server_type). Other config errors call sys.exit() directly.
+    try:
+        config = build_config(args)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.list_genres:
         list_genres_mode(config)

@@ -6,9 +6,12 @@
 # Environment files:
 #   The script loads .env from the repo root by default.
 #   Use --env-file to load a different file (e.g. --env-file .env.prod).
-#   To connect to Emby and apply ratings, set EMBY_API_KEY and EMBY_URL in your .env.
+#   To connect to Emby, set EMBY_API_KEY and EMBY_URL in your .env.
+#   To connect to Jellyfin, set JELLYFIN_API_KEY and JELLYFIN_URL in your .env
+#   and set SERVER_TYPE=jellyfin (or use --server-type jellyfin on the CLI).
 
 [general]
+server_type = "emby"   # "emby" (default) or "jellyfin"
 # A single library path. To scan multiple libraries, run the script once per
 # library or use a wrapper script. The library_path can also be passed as the
 # first positional CLI argument or via TAGLRC_LIBRARY_PATH env var.
@@ -17,6 +20,10 @@ library_path = ""
 [emby]
 url = "http://localhost:8096"
 # API key goes in .env file as EMBY_API_KEY — do not put secrets in this file.
+
+[jellyfin]
+url = "http://localhost:8097"
+# API key goes in .env file as JELLYFIN_API_KEY — do not put secrets in this file.
 
 [detection.r]
 stems = ["fuck", "shit", "nigga", "nigger", "pussy", "cock", "cum", "faggot"]
@@ -50,7 +57,7 @@ false_positives = [
 
 [detection.g_genres]
 # Genres (case-insensitive) that identify instrumental/clean tracks → G rating.
-# Run `python3 TagExplicitLyrics.py --list-genres` to see your library's genre tags.
+# Run `python3 SetMusicParentalRating.py --list-genres` to see your library's genre tags.
 # Leave empty (or omit section) to disable this feature.
 genres = []
 # Example values (uncomment and edit to enable):
