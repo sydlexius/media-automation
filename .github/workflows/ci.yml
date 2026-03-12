@@ -41,10 +41,12 @@ jobs:
 
       - name: Verify imports
         run: python -c "import TagExplicitLyrics"
+        working-directory: TagExplicitLyrics
 
       - name: Install pytest
         run: pip install pytest
 
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
-        if: hashFiles('tests/**') != ''
+        working-directory: TagExplicitLyrics
+        if: hashFiles('TagExplicitLyrics/tests/**') != ''
