@@ -876,7 +876,7 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
     if not config.server_url or not config.server_api_key:
         log.error(
             "--force-rating requires a server URL and API key "
-            "(via --emby-url/EMBY_URL or --jellyfin-url/JELLYFIN_URL, .env, or TOML config)"
+            "(URL via --emby-url/EMBY_URL/JELLYFIN_URL or [emby]/[jellyfin] TOML, API key via CLI/env/.env)"
         )
         sys.exit(1)
 
@@ -935,8 +935,7 @@ def list_genres_mode(config: Config) -> None:
     if not config.server_url or not config.server_api_key:
         print(
             "Error: --list-genres requires server URL and API key "
-            "(via EMBY_URL/EMBY_API_KEY or JELLYFIN_URL/JELLYFIN_API_KEY, "
-            "environment variables, .env file, or [emby]/[jellyfin] in the TOML config). "
+            "(URL via CLI/env/.env or [emby]/[jellyfin] TOML, API key via CLI/env/.env). "
             "Use --server-type to select Emby (default) or Jellyfin.",
             file=sys.stderr,
         )
@@ -1010,7 +1009,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--server-type",
         default=None,
-        metavar="TYPE",
+        choices=("emby", "jellyfin"),
         help="Media server type: 'emby' (default) or 'jellyfin'",
     )
     parser.add_argument(
