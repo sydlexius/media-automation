@@ -9,15 +9,16 @@ Scans sidecar lyric files (`.lrc`, `.txt`) for explicit content and sets `Offici
 ### How It Works
 
 1. Recursively finds `.lrc` and `.txt` sidecar files under a music library path
-2. Strips LRC timestamps/metadata to extract plain lyric text
-3. Runs tiered word detection against configurable word lists:
+2. Matches each sidecar to its audio file by filename stem
+3. Strips LRC timestamps/metadata to extract plain lyric text
+4. Runs tiered word detection against configurable word lists:
    - **R** — strong profanity (stem matching: `fuck`, `shit`, etc.)
    - **PG-13** — moderate profanity (stem matching: `bitch`, `whore`, etc.)
-4. Matches each sidecar to its audio file by filename stem
 5. Looks up the audio file in Emby via a bulk prefetch of all Audio items
 6. Sets `OfficialRating` on the Emby item via a GET-then-POST round-trip
+7. *(Optional)* Genre pass: any Emby audio item whose `Genres` field contains an entry from `[detection.g_genres]` and has no matching sidecar receives a `G` rating
 
-Tracks without sidecar files are never touched. No assumptions are made about content based on sidecar presence or absence alone.
+**Priority rule**: any track with a matching sidecar file — explicit or clean — is excluded from the genre pass entirely. Sidecar-scanned tracks that are clean will receive no rating from the genre pass, even if their genre would otherwise qualify for G.
 
 ### Requirements
 
@@ -43,6 +44,9 @@ python3 TagExplicitLyrics.py /path/to/classical --force-rating G
 
 # 5. Clear stale ratings after fixing sidecar typos
 python3 TagExplicitLyrics.py /path/to/music --clear
+
+# 6. Discover what genre strings exist in your library (for g_genres config)
+python3 TagExplicitLyrics.py --list-genres
 ```
 
 ### CLI Reference
@@ -63,6 +67,9 @@ Options:
   --report PATH             CSV report output path
   --clear                   Clear ratings from tracks whose sidecars are now clean
   --force-rating RATING     Skip detection; set this rating on ALL tracks in the path
+  --list-genres             Print all Audio genre tags from Emby, then exit
+                            (useful for building [detection.g_genres] in the config;
+                            library_path is not required)
 ```
 
 ### Configuration
@@ -79,7 +86,16 @@ EMBY_URL=http://localhost:8096
 # Exported EMBY_URL / EMBY_API_KEY still take precedence
 ```
 
-**`explicit_config.toml`** — word lists, library path, report output. Copy `explicit_config.example.toml` to get started. The script works without any config file using sensible defaults.
+**`explicit_config.toml`** — word lists, library path, report output, and genre allow-list. Copy `explicit_config.example.toml` to get started. The script works without any config file using sensible defaults.
+
+**`[detection.g_genres]`** — optional genre-based G rating. Any Emby audio item whose `Genres` field contains a listed entry (matched **case-insensitively**) and has no matching sidecar file will receive a `G` rating. Omitting the section or leaving `genres = []` disables the feature entirely.
+
+```toml
+[detection.g_genres]
+genres = ["Classical", "Ambient", "Instrumental", "Chiptune"]
+```
+
+Run `--list-genres` to see all genre strings present in your Emby library.
 
 ### Detection Details
 
@@ -102,13 +118,14 @@ The `--report` flag produces a CSV with columns useful for admin review:
 | `tier` | `R`, `PG-13`, or empty (clean) |
 | `matched_words` | Semicolon-separated list of words that triggered detection |
 | `previous_rating` | What `OfficialRating` was before this run |
-| `action` | `set`, `cleared`, `already_correct`, `skipped`, `dry_run`, `error` |
+| `action` | `set` · `cleared` · `already_correct` · `skipped` · `not_found_in_emby` · `emby_unavailable` · `no_audio_file` · `error` · `dry_run` · `dry_run_clear` · `g_genre` · `g_genre_already_correct` · `dry_run_g_genre` |
 
 This lets an admin spot false positives caused by lyric transcription errors (e.g., "cuming" instead of "coming") and take corrective action on the sidecar files.
 
 ### Emby API Notes
 
 - Auth: `X-Emby-Token` header on every request
-- Item listing: `GET /Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path,OfficialRating,AlbumArtist,Album` (paginated)
+- Item listing: `GET /Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path,OfficialRating,AlbumArtist,Album,Genres` (paginated)
 - Item fetch: `GET /Users/{userId}/Items/{itemId}` (user-scoped; `GET /Items/{id}` returns 404)
 - Item update: `POST /Items/{itemId}` with the full item body (GET-then-POST round-trip preserves existing metadata)
+- Genre listing: `GET /MusicGenres?Recursive=true` (used by `--list-genres`)

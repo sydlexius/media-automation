@@ -126,10 +126,12 @@ class Config:
     clear: bool = False
     force_rating: str | None = None
     report_path: Path | None = None
+    g_genres: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self._r_exact_patterns = _compile_exact_patterns(self.r_exact)
         self._pg13_exact_patterns = _compile_exact_patterns(self.pg13_exact)
+        self.g_genres = [g for g in self.g_genres if g.strip()]
 
 
 @dataclass
@@ -140,7 +142,8 @@ class DetectionResult:
     matched_words: list[str] = field(default_factory=list)
     emby_item_id: str | None = None
     action: str = ""  # set | cleared | skipped | already_correct | not_found_in_emby |
-    #                    emby_unavailable | error | no_audio_file | dry_run | dry_run_clear
+    #                    emby_unavailable | error | no_audio_file | dry_run | dry_run_clear |
+    #                    g_genre | g_genre_already_correct | dry_run_g_genre
     previous_rating: str = ""
     artist: str = ""
     album: str = ""
@@ -224,14 +227,14 @@ def build_config(args: argparse.Namespace) -> Config:
         or env_file.get("TAGLRC_LIBRARY_PATH")
         or toml.get("general", {}).get("library_path")
     )
-    if not library_path_str:
+    if not library_path_str and not getattr(args, "list_genres", False):
         print(
             "Error: library_path is required. Provide it via command-line argument, "
             "TAGLRC_LIBRARY_PATH environment variable, or [general].library_path in the TOML config.",
             file=sys.stderr,
         )
         sys.exit(1)
-    library_path = Path(library_path_str)
+    library_path = Path(library_path_str or ".")
 
     # --- emby_url ---
     emby_url = (
@@ -258,6 +261,7 @@ def build_config(args: argparse.Namespace) -> Config:
     false_positives = det.get("ignore", {}).get(
         "false_positives", list(DEFAULT_FALSE_POSITIVES)
     )
+    g_genres = det.get("g_genres", {}).get("genres", [])
 
     # --- report ---
     report_path_str = args.report or toml.get("report", {}).get("output_path")
@@ -276,6 +280,7 @@ def build_config(args: argparse.Namespace) -> Config:
         clear=args.clear,
         force_rating=args.force_rating,
         report_path=report_path,
+        g_genres=g_genres,
     )
 
 
@@ -401,6 +406,24 @@ def classify_lyrics(text: str, config: Config) -> tuple[str | None, list[str]]:
     return None, []
 
 
+def match_g_genre(item: dict, g_genres: list[str]) -> str | None:
+    """Return the first Genres entry matching the safe list (case-insensitive), or None."""
+    if not g_genres:
+        return None
+    lowered = {g.lower() for g in g_genres}
+    for entry in item.get("Genres") or []:
+        if not isinstance(entry, str):
+            log.debug(
+                "match_g_genre: unexpected non-string Genres entry %r in item %s",
+                entry,
+                item.get("Id", "<unknown>"),
+            )
+            continue
+        if entry.lower() in lowered:
+            return entry
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Emby API Client
 # ---------------------------------------------------------------------------
@@ -431,14 +454,19 @@ class EmbyClient:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 resp_data = resp.read()
                 if resp_data:
-                    return json.loads(resp_data)
+                    try:
+                        return json.loads(resp_data)
+                    except json.JSONDecodeError as exc:
+                        raise EmbyAPIError(
+                            f"Non-JSON response on {method} {path}: {resp_data[:200]!r}"
+                        ) from exc
                 return None
         except urllib.error.HTTPError as exc:
             body_snippet = ""
             try:
                 body_snippet = exc.read().decode("utf-8", errors="replace")[:1024]
-            except Exception:
-                pass
+            except Exception as inner_exc:
+                log.debug("Could not read HTTP error body: %s", inner_exc)
             raise EmbyAPIError(
                 f"HTTP {exc.code} on {method} {path}: {body_snippet}"
             ) from exc
@@ -456,7 +484,7 @@ class EmbyClient:
             result = self._request(
                 "GET",
                 f"/Items?Recursive=true&IncludeItemTypes=Audio"
-                f"&Fields=Path,OfficialRating,AlbumArtist,Album"
+                f"&Fields=Path,OfficialRating,AlbumArtist,Album,Genres"
                 f"&StartIndex={start_index}&Limit={page_size}",
             )
             if not result:
@@ -501,6 +529,27 @@ class EmbyClient:
         """POST /Items/{id} — send full item body with modified fields."""
         self._request("POST", f"/Items/{item_id}", body=item_body)
         log.debug("Updated item %s", item_id)
+
+    def list_genres(self) -> list[str]:
+        """Return sorted list of all Audio genre names from Emby via GET /MusicGenres?Recursive=true."""
+        result = self._request(
+            "GET",
+            "/MusicGenres?Recursive=true",
+        )
+        if result is None:
+            log.warning("list_genres: Emby returned an empty response body")
+            return []
+        items = result.get("Items")
+        if items is None:
+            log.warning(
+                "list_genres: Emby response missing 'Items' key; keys present: %s",
+                list(result.keys()),
+            )
+            return []
+        return sorted(
+            (item.get("Name", "") for item in items if item.get("Name")),
+            key=str.casefold,
+        )
 
 
 def _normalize_path(p: str) -> str:
@@ -609,6 +658,7 @@ def process_library(config: Config) -> list[DetectionResult]:
         log.info("Emby URL or API key not configured; running in analysis-only mode")
 
     results: list[DetectionResult] = []
+    sidecar_handled_paths: set[str] = set()
 
     for sidecar, audio in pairs:
         text = parse_sidecar(sidecar)
@@ -633,6 +683,7 @@ def process_library(config: Config) -> list[DetectionResult]:
 
         # Resolve Emby item
         norm_audio = _normalize_path(str(audio))
+        sidecar_handled_paths.add(norm_audio)
         emby_item = emby_items.get(norm_audio)
         if emby_item:
             dr.emby_item_id = emby_item.get("Id")
@@ -689,6 +740,47 @@ def process_library(config: Config) -> list[DetectionResult]:
             dr.action = "skipped"
 
         results.append(dr)
+
+    # --- Genre-based G rating pass ---
+    if config.g_genres and emby is not None:
+        lib_root = Path(_normalize_path(str(config.library_path.resolve())))
+        for norm_path, item in emby_items.items():
+            if norm_path in sidecar_handled_paths:
+                continue
+            if not Path(norm_path).is_relative_to(lib_root):
+                continue
+            matched_genre = match_g_genre(item, config.g_genres)
+            if matched_genre is None:
+                continue
+            current_rating = item.get("OfficialRating", "") or ""
+            item_id = item.get("Id", "")
+            if not item_id:
+                log.warning(
+                    "Genre-pass: Emby item at %s has no 'Id' field; skipping", norm_path
+                )
+                continue
+            dr = DetectionResult(
+                sidecar_path=None,
+                audio_path=Path(norm_path),
+                tier="G",
+                matched_words=[matched_genre],
+                emby_item_id=item_id,
+                previous_rating=current_rating,
+                artist=item.get("AlbumArtist", "") or "",
+                album=item.get("Album", "") or "",
+            )
+            if config.dry_run:
+                dr.action = "dry_run_g_genre"
+                log.info(
+                    "[DRY RUN] Would set G on %s (genre: %s)", norm_path, matched_genre
+                )
+            elif current_rating == "G":
+                dr.action = "g_genre_already_correct"
+            else:
+                dr.action = _apply_rating(emby, item_id, "G", norm_path)
+                if dr.action == "set":
+                    dr.action = "g_genre"
+            results.append(dr)
 
     return results
 
@@ -751,6 +843,27 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
     return results
 
 
+def list_genres_mode(config: Config) -> None:
+    """--list-genres mode: print all Audio genre names from Emby to stdout. Exits with non-zero status on error."""
+    if not config.emby_url or not config.emby_api_key:
+        print(
+            "Error: --list-genres requires EMBY_URL and EMBY_API_KEY.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    emby = EmbyClient(config.emby_url, config.emby_api_key)
+    try:
+        genres = emby.list_genres()
+    except EmbyAPIError as exc:
+        log.error("Failed to retrieve genres from Emby: %s", exc)
+        sys.exit(1)
+    print("=== Audio Genres ===")
+    for g in genres:
+        print(f"  {g}")
+    if not genres:
+        print("  (none found)")
+
+
 def _apply_rating(
     emby: EmbyClient | None,
     item_id: str,
@@ -759,6 +872,9 @@ def _apply_rating(
 ) -> str:
     """GET-then-POST round-trip to set OfficialRating. Returns action string."""
     if emby is None:
+        log.error(
+            "_apply_rating called with no Emby client for %s (%s)", label, item_id
+        )
         return "error"
     try:
         full_item = emby.get_item(item_id)
@@ -837,6 +953,14 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="RATING",
         help="Bypass detection; set this rating on ALL audio tracks in the library via Emby",
     )
+    parser.add_argument(
+        "--list-genres",
+        action="store_true",
+        help=(
+            "Connect to Emby, print all Audio genre tags, then exit. "
+            "Useful for populating [detection.g_genres] in the config."
+        ),
+    )
     return parser
 
 
@@ -850,20 +974,34 @@ def setup_logging(verbose: bool) -> None:
 
 
 def print_summary(results: list[DetectionResult]) -> None:
-    total = len(results)
-    r_count = sum(1 for r in results if r.tier == "R")
-    pg13_count = sum(1 for r in results if r.tier == "PG-13")
-    clean = sum(1 for r in results if r.tier is None)
+    sidecar_results = [
+        r for r in results if r.sidecar_path is not None or r.action == "no_audio_file"
+    ]
+    genre_results = [
+        r
+        for r in results
+        if r.action in ("g_genre", "g_genre_already_correct", "dry_run_g_genre")
+    ]
+    total = len(sidecar_results)
+    r_count = sum(1 for r in sidecar_results if r.tier == "R")
+    pg13_count = sum(1 for r in sidecar_results if r.tier == "PG-13")
+    clean = sum(1 for r in sidecar_results if r.tier is None)
     audio_found = sum(
-        1 for r in results if r.audio_path is not None and r.action != "no_audio_file"
+        1
+        for r in sidecar_results
+        if r.audio_path is not None and r.action != "no_audio_file"
     )
-    emby_matched = sum(1 for r in results if r.emby_item_id is not None)
+    emby_matched = sum(1 for r in sidecar_results if r.emby_item_id is not None)
     rated = sum(1 for r in results if r.action == "set")
     already = sum(1 for r in results if r.action == "already_correct")
     cleared = sum(1 for r in results if r.action == "cleared")
     dry = sum(1 for r in results if r.action.startswith("dry_run"))
     errors = sum(1 for r in results if r.action == "error")
     emby_unavail = sum(1 for r in results if r.action == "emby_unavailable")
+    g_genre_rated = sum(1 for r in genre_results if r.action == "g_genre")
+    g_genre_already = sum(
+        1 for r in genre_results if r.action == "g_genre_already_correct"
+    )
 
     print()
     print("=== Explicit Lyrics Scan Complete ===")
@@ -876,6 +1014,9 @@ def print_summary(results: list[DetectionResult]) -> None:
     print(f"  Ratings set:         {rated}")
     print(f"  Already correct:     {already}")
     print(f"  Ratings cleared:     {cleared}")
+    if g_genre_rated or g_genre_already:
+        print(f"  G (genre-matched):   {g_genre_rated}")
+        print(f"  Already G (genre):   {g_genre_already}")
     if emby_unavail:
         print(f"  Emby unavailable:    {emby_unavail}")
     if dry:
@@ -890,6 +1031,10 @@ def main() -> None:
     setup_logging(args.verbose)
 
     config = build_config(args)
+
+    if args.list_genres:
+        list_genres_mode(config)
+        return
 
     if config.force_rating:
         results = force_rate_library(config)

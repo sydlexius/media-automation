@@ -48,5 +48,17 @@ false_positives = [
     "accumulate",
 ]
 
+[detection.g_genres]
+# Genres (case-insensitive) that identify instrumental/clean tracks → G rating.
+# Run `python3 TagExplicitLyrics.py --list-genres` to see your library's genre tags.
+# Leave empty (or omit section) to disable this feature.
+genres = [
+    "Classical",
+    "Ambient",
+    "Instrumental",
+    "Video Game Music",
+    "Chiptune",
+]
+
 [report]
 output_path = "explicit_report.csv"
