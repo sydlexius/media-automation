@@ -721,18 +721,18 @@ def process_library(config: Config) -> list[DetectionResult]:
     pairs = scan_library(config.library_path)
 
     # Prefetch server items for path matching (even in dry-run, we read but don't write)
-    emby: MediaServerClient | None = None
-    emby_items: dict[str, dict] = {}
+    client: MediaServerClient | None = None
+    server_items: dict[str, dict] = {}
     if config.server_url and config.server_api_key:
-        emby = MediaServerClient(
+        client = MediaServerClient(
             config.server_url, config.server_api_key, config.server_type
         )
         try:
-            emby_items = emby.prefetch_audio_items()
+            server_items = client.prefetch_audio_items()
         except MediaServerError as exc:
             log.error("Failed to prefetch server items: %s", exc)
             log.error("Continuing in analysis-only mode")
-            emby = None
+            client = None
     else:
         log.info("Server URL or API key not configured; running in analysis-only mode")
 
@@ -760,45 +760,45 @@ def process_library(config: Config) -> list[DetectionResult]:
             results.append(dr)
             continue
 
-        # Resolve Emby item
+        # Resolve server item
         norm_audio = _normalize_path(str(audio))
         sidecar_handled_paths.add(norm_audio)
-        emby_item = emby_items.get(norm_audio)
-        if emby_item:
-            dr.emby_item_id = emby_item.get("Id")
-            dr.previous_rating = emby_item.get("OfficialRating", "") or ""
-            dr.artist = emby_item.get("AlbumArtist", "") or ""
-            dr.album = emby_item.get("Album", "") or ""
+        server_item = server_items.get(norm_audio)
+        if server_item:
+            dr.emby_item_id = server_item.get("Id")
+            dr.previous_rating = server_item.get("OfficialRating", "") or ""
+            dr.artist = server_item.get("AlbumArtist", "") or ""
+            dr.album = server_item.get("Album", "") or ""
 
         # Decide action
         if tier is not None:
             # Explicit content found — set rating
-            if emby is None:
+            if client is None:
                 dr.action = "emby_unavailable"
             elif dr.emby_item_id is None:
                 dr.action = "not_found_in_emby"
-                log.warning("Audio file not found in Emby: %s", audio)
+                log.warning("Audio file not found in server: %s", audio)
             elif config.dry_run:
                 dr.action = "dry_run"
                 log.info("[DRY RUN] Would set %s on %s", tier, audio.name)
             else:
                 current_rating = (
-                    emby_item.get("OfficialRating", "") if emby_item else ""
+                    server_item.get("OfficialRating", "") if server_item else ""
                 )
                 if current_rating == tier:
                     dr.action = "already_correct"
                     log.debug("Already rated %s: %s", tier, audio.name)
                 else:
-                    dr.action = _apply_rating(emby, dr.emby_item_id, tier, audio.name)
+                    dr.action = _apply_rating(client, dr.emby_item_id, tier, audio.name)
         elif config.clear:
             # Clean content + --clear flag — remove rating if set
-            if emby is None:
+            if client is None:
                 dr.action = "emby_unavailable"
             elif dr.emby_item_id is None:
                 dr.action = "not_found_in_emby"
             elif config.dry_run:
                 current_rating = (
-                    emby_item.get("OfficialRating", "") if emby_item else ""
+                    server_item.get("OfficialRating", "") if server_item else ""
                 )
                 if current_rating:
                     dr.action = "dry_run_clear"
@@ -807,10 +807,10 @@ def process_library(config: Config) -> list[DetectionResult]:
                     dr.action = "skipped"
             else:
                 current_rating = (
-                    emby_item.get("OfficialRating", "") if emby_item else ""
+                    server_item.get("OfficialRating", "") if server_item else ""
                 )
                 if current_rating:
-                    dr.action = _apply_rating(emby, dr.emby_item_id, "", audio.name)
+                    dr.action = _apply_rating(client, dr.emby_item_id, "", audio.name)
                     if dr.action == "set":
                         dr.action = "cleared"
                 else:
@@ -821,9 +821,9 @@ def process_library(config: Config) -> list[DetectionResult]:
         results.append(dr)
 
     # --- Genre-based G rating pass ---
-    if config.g_genres and emby is not None:
+    if config.g_genres and client is not None:
         lib_root = Path(_normalize_path(str(config.library_path)))
-        for norm_path, item in emby_items.items():
+        for norm_path, item in server_items.items():
             if norm_path in sidecar_handled_paths:
                 continue
             if not Path(norm_path).is_relative_to(lib_root):
@@ -857,7 +857,7 @@ def process_library(config: Config) -> list[DetectionResult]:
                     "[DRY RUN] Would set G on %s (genre: %s)", norm_path, matched_genre
                 )
             else:
-                dr.action = _apply_rating(emby, item_id, "G", norm_path)
+                dr.action = _apply_rating(client, item_id, "G", norm_path)
                 if dr.action == "set":
                     dr.action = "g_genre"
             results.append(dr)
@@ -881,11 +881,11 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
         sys.exit(1)
 
     target = config.force_rating
-    emby = MediaServerClient(
+    client = MediaServerClient(
         config.server_url, config.server_api_key, config.server_type
     )
     try:
-        all_items = emby.prefetch_audio_items()
+        all_items = client.prefetch_audio_items()
     except MediaServerError as exc:
         log.error("Failed to prefetch server items: %s", exc)
         sys.exit(1)
@@ -924,7 +924,7 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
             dr.action = "dry_run"
             log.info("[DRY RUN] Would set %s on %s", target, norm_path)
         else:
-            dr.action = _apply_rating(emby, item_id, target, norm_path)
+            dr.action = _apply_rating(client, item_id, target, norm_path)
         results.append(dr)
 
     return results
@@ -941,11 +941,11 @@ def list_genres_mode(config: Config) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    emby = MediaServerClient(
+    client = MediaServerClient(
         config.server_url, config.server_api_key, config.server_type
     )
     try:
-        genres = emby.list_genres()
+        genres = client.list_genres()
     except MediaServerError as exc:
         log.error("Failed to retrieve genres from server: %s", exc)
         sys.exit(1)
@@ -1099,13 +1099,13 @@ def print_summary(results: list[DetectionResult]) -> None:
         for r in sidecar_results
         if r.audio_path is not None and r.action != "no_audio_file"
     )
-    emby_matched = sum(1 for r in sidecar_results if r.emby_item_id is not None)
+    server_matched = sum(1 for r in sidecar_results if r.emby_item_id is not None)
     rated = sum(1 for r in results if r.action == "set")
     already = sum(1 for r in results if r.action == "already_correct")
     cleared = sum(1 for r in results if r.action == "cleared")
     dry = sum(1 for r in results if r.action.startswith("dry_run"))
     errors = sum(1 for r in results if r.action == "error")
-    emby_unavail = sum(1 for r in results if r.action == "emby_unavailable")
+    server_unavail = sum(1 for r in results if r.action == "emby_unavailable")
     g_genre_rated = sum(1 for r in genre_results if r.action == "g_genre")
     g_genre_already = sum(
         1 for r in genre_results if r.action == "g_genre_already_correct"
@@ -1120,7 +1120,7 @@ def print_summary(results: list[DetectionResult]) -> None:
         print(f"    PG-13:             {pg13_count}")
         print(f"    Clean:             {clean}")
         print(f"  Audio files found:   {audio_found} / {total}")
-        print(f"  Server items matched: {emby_matched} / {audio_found}")
+        print(f"  Server items matched: {server_matched} / {audio_found}")
     print(f"  Ratings set:         {rated}")
     print(f"  Already correct:     {already}")
     print(f"  Ratings cleared:     {cleared}")
@@ -1129,8 +1129,8 @@ def print_summary(results: list[DetectionResult]) -> None:
         print(f"  Already G (genre):   {g_genre_already}")
         if g_genre_dry:
             print(f"  Dry-run G (genre):   {g_genre_dry}")
-    if emby_unavail:
-        print(f"  Emby unavailable:    {emby_unavail}")
+    if server_unavail:
+        print(f"  Server unavailable:  {server_unavail}")
     if dry:
         print(f"  Dry-run would act:   {dry}")
     print(f"  Errors:              {errors}")
