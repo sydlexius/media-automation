@@ -158,7 +158,22 @@ def load_env(path: Path, *, required: bool = False) -> dict[str, str]:
     """Parse a .env file into a dict. Skips comments and blank lines."""
     env: dict[str, str] = {}
     if not path.is_file():
-        log.debug(".env file not found at %s", path)
+        has_url = bool((os.environ.get("EMBY_URL") or "").strip())
+        has_key = bool((os.environ.get("EMBY_API_KEY") or "").strip())
+        if has_url and has_key:
+            log.debug(
+                ".env file not found at %s (credentials provided via environment variables)",
+                path,
+            )
+        elif has_url or has_key:
+            missing = "EMBY_API_KEY" if has_url else "EMBY_URL"
+            log.warning(
+                ".env file not found at %s and %s is not set in the environment",
+                path,
+                missing,
+            )
+        else:
+            log.warning(".env file not found at %s", path)
         return env
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -217,7 +232,7 @@ def build_config(args: argparse.Namespace) -> Config:
             )
             sys.exit(1)
     else:
-        env_path = script_dir / ".env"
+        env_path = script_dir.parent / ".env"
     env_file = load_env(env_path, required=bool(args.env_file))
 
     # --- library_path ---
@@ -948,7 +963,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--env-file",
         default=None,
-        help="Path to .env file (default: .env next to script; e.g. --env-file .env.prod)",
+        help="Path to .env file (default: .env in the repo root; e.g. --env-file .env.prod)",
     )
     parser.add_argument(
         "--emby-url",
