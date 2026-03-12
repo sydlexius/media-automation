@@ -651,6 +651,9 @@ def write_report(
 def process_library(config: Config) -> list[DetectionResult]:
     """Main flow: scan sidecars -> detect -> update Emby."""
     lp = config.library_path
+    if not lp.is_absolute():
+        log.error("library_path must be an absolute path; got %r", str(lp))
+        sys.exit(1)
     if not lp.exists():
         log.error("library_path does not exist: %s", lp)
         sys.exit(1)
@@ -759,7 +762,7 @@ def process_library(config: Config) -> list[DetectionResult]:
 
     # --- Genre-based G rating pass ---
     if config.g_genres and emby is not None:
-        lib_root = Path(_normalize_path(str(config.library_path.resolve())))
+        lib_root = Path(_normalize_path(str(config.library_path)))
         for norm_path, item in emby_items.items():
             if norm_path in sidecar_handled_paths:
                 continue
@@ -804,6 +807,11 @@ def process_library(config: Config) -> list[DetectionResult]:
 def force_rate_library(config: Config) -> list[DetectionResult]:
     """--force-rating mode: set a fixed rating on ALL audio tracks under the
     library path, skipping tracks already at the target rating."""
+    if not config.library_path.is_absolute():
+        log.error(
+            "library_path must be an absolute path; got %r", str(config.library_path)
+        )
+        sys.exit(1)
     if not config.emby_url or not config.emby_api_key:
         log.error(
             "--force-rating requires an Emby URL and API key "
