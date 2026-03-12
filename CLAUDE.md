@@ -10,7 +10,7 @@ Currently contains one script: `TagExplicitLyrics/TagExplicitLyrics.py` — scan
 
 ## Repository Layout
 
-```
+```text
 /
 ├── .env / .env.prod          # shared credentials (gitignored)
 ├── .env.example              # credentials template (committed)
