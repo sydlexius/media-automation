@@ -131,7 +131,7 @@ class Config:
     def __post_init__(self) -> None:
         self._r_exact_patterns = _compile_exact_patterns(self.r_exact)
         self._pg13_exact_patterns = _compile_exact_patterns(self.pg13_exact)
-        self.g_genres = [g for g in self.g_genres if g.strip()]
+        self.g_genres = [g.strip() for g in self.g_genres if g.strip()]
 
 
 @dataclass
@@ -539,6 +539,11 @@ class EmbyClient:
         if result is None:
             log.warning("list_genres: Emby returned an empty response body")
             return []
+        if not isinstance(result, dict):
+            raise EmbyAPIError(
+                f"list_genres: unexpected response type {type(result).__name__!r}; "
+                "expected a JSON object"
+            )
         items = result.get("Items")
         if items is None:
             log.warning(
@@ -546,10 +551,21 @@ class EmbyClient:
                 list(result.keys()),
             )
             return []
-        return sorted(
-            (item.get("Name", "") for item in items if item.get("Name")),
-            key=str.casefold,
-        )
+        if not isinstance(items, list):
+            raise EmbyAPIError(
+                f"list_genres: 'Items' field is {type(items).__name__!r}, expected a list"
+            )
+        non_dict = sum(1 for item in items if not isinstance(item, dict))
+        if non_dict:
+            log.warning(
+                "list_genres: skipped %d non-dict item(s) in Items list", non_dict
+            )
+        names = [
+            item.get("Name", "")
+            for item in items
+            if isinstance(item, dict) and item.get("Name")
+        ]
+        return sorted(names, key=str.casefold)
 
 
 def _normalize_path(p: str) -> str:
@@ -1005,12 +1021,13 @@ def print_summary(results: list[DetectionResult]) -> None:
 
     print()
     print("=== Explicit Lyrics Scan Complete ===")
-    print(f"  Sidecars scanned:    {total}")
-    print(f"    R-rated:           {r_count}")
-    print(f"    PG-13:             {pg13_count}")
-    print(f"    Clean:             {clean}")
-    print(f"  Audio files found:   {audio_found} / {total}")
-    print(f"  Emby items matched:  {emby_matched} / {audio_found}")
+    if total:
+        print(f"  Sidecars scanned:    {total}")
+        print(f"    R-rated:           {r_count}")
+        print(f"    PG-13:             {pg13_count}")
+        print(f"    Clean:             {clean}")
+        print(f"  Audio files found:   {audio_found} / {total}")
+        print(f"  Emby items matched:  {emby_matched} / {audio_found}")
     print(f"  Ratings set:         {rated}")
     print(f"  Already correct:     {already}")
     print(f"  Ratings cleared:     {cleared}")
