@@ -67,11 +67,10 @@ Positional:
 Options:
   --config PATH             TOML config file (default: explicit_config.toml in script dir)
   --env-file PATH           .env file to load (default: .env in repo root; e.g. --env-file .env.prod)
-  --server-type TYPE        Media server type: 'emby' (default) or 'jellyfin'
-  --emby-url URL            Emby server URL
-  --emby-api-key KEY        Emby API key
-  --jellyfin-url URL        Jellyfin server URL (used when --server-type jellyfin)
-  --jellyfin-api-key KEY    Jellyfin API key (used when --server-type jellyfin)
+  --server-type TYPE        'emby' or 'jellyfin' — auto-detected from env vars when only
+                            one server is configured; required when both are configured
+  --server-url URL          Server URL — overrides the env var for the active server type
+  --api-key KEY             API key — overrides the env var for the active server type
   -n, --dry-run             Analyze only, no server updates
   -v, --verbose             Debug logging
   --report PATH             CSV report output path
@@ -88,17 +87,19 @@ Settings are merged in priority order: **CLI flags > env vars > `.env` file > TO
 
 **`.env`** — secrets only (one per environment):
 ```bash
-# .env — local dev (Emby)
-EMBY_API_KEY=your-emby-key-here
+# Single-server .env — type is auto-detected from which vars are set
 EMBY_URL=http://localhost:8096
+EMBY_API_KEY=your-emby-key-here
 
-# .env — local dev (Jellyfin)
-JELLYFIN_API_KEY=your-jellyfin-key-here
+# Both servers configured — SERVER_TYPE is then required to disambiguate
+EMBY_URL=http://localhost:8096
+EMBY_API_KEY=your-emby-key-here
 JELLYFIN_URL=http://localhost:8097
-SERVER_TYPE=jellyfin
+JELLYFIN_API_KEY=your-jellyfin-key-here
+SERVER_TYPE=emby   # or override per-run with --server-type
 
 # Use --env-file .env.prod to load a different env file
-# Exported env vars still take precedence
+# Exported env vars still take precedence over .env
 ```
 
 **`explicit_config.toml`** — word lists, library path, report output, and genre allow-list. Copy `explicit_config.example.toml` to get started. The script works without any config file using sensible defaults.

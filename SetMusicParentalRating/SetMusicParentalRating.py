@@ -262,42 +262,66 @@ def build_config(args: argparse.Namespace) -> Config:
         )
         sys.exit(1)
 
-    # --- server_type ---
-    server_type = (
+    # --- server_type (explicit override, or auto-detected from which env vars are set) ---
+    explicit_type = (
         (
             (getattr(args, "server_type", None) or "")
             or os.environ.get("SERVER_TYPE", "")
             or env_file.get("SERVER_TYPE", "")
             or toml.get("general", {}).get("server_type", "")
-            or "emby"
         )
         .lower()
         .strip()
     )
 
+    if explicit_type:
+        server_type = explicit_type
+    else:
+        has_emby = bool(
+            os.environ.get("EMBY_URL")
+            or env_file.get("EMBY_URL")
+            or toml.get("emby", {}).get("url")
+        )
+        has_jellyfin = bool(
+            os.environ.get("JELLYFIN_URL")
+            or env_file.get("JELLYFIN_URL")
+            or toml.get("jellyfin", {}).get("url")
+        )
+        if has_emby and has_jellyfin:
+            print(
+                "Error: both Emby and Jellyfin are configured; "
+                "use --server-type emby or --server-type jellyfin to select one.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        server_type = "jellyfin" if has_jellyfin else "emby"
+
     # --- server_url / server_api_key (resolved per server_type) ---
+    cli_server_url = getattr(args, "server_url", None) or ""
+    cli_api_key = getattr(args, "api_key", None) or ""
+
     if server_type == "jellyfin":
         server_url = (
-            (getattr(args, "jellyfin_url", None) or "")
+            cli_server_url
             or os.environ.get("JELLYFIN_URL", "")
             or env_file.get("JELLYFIN_URL", "")
             or toml.get("jellyfin", {}).get("url", "")
         )
         server_api_key = (
-            (getattr(args, "jellyfin_api_key", None) or "")
+            cli_api_key
             or os.environ.get("JELLYFIN_API_KEY", "")
             or env_file.get("JELLYFIN_API_KEY", "")
             or ""
         )
     else:
         server_url = (
-            (getattr(args, "emby_url", None) or "")
+            cli_server_url
             or os.environ.get("EMBY_URL", "")
             or env_file.get("EMBY_URL", "")
             or toml.get("emby", {}).get("url", "")
         )
         server_api_key = (
-            (getattr(args, "emby_api_key", None) or "")
+            cli_api_key
             or os.environ.get("EMBY_API_KEY", "")
             or env_file.get("EMBY_API_KEY", "")
             or ""
@@ -876,7 +900,7 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
     if not config.server_url or not config.server_api_key:
         log.error(
             "--force-rating requires a server URL and API key "
-            "(URL via --emby-url/EMBY_URL/JELLYFIN_URL or [emby]/[jellyfin] TOML, API key via CLI/env/.env)"
+            "(set EMBY_URL+EMBY_API_KEY or JELLYFIN_URL+JELLYFIN_API_KEY in .env, or use --server-url/--api-key)"
         )
         sys.exit(1)
 
@@ -935,8 +959,8 @@ def list_genres_mode(config: Config) -> None:
     if not config.server_url or not config.server_api_key:
         print(
             "Error: --list-genres requires server URL and API key "
-            "(URL via CLI/env/.env or [emby]/[jellyfin] TOML, API key via CLI/env/.env). "
-            "Use --server-type to select Emby (default) or Jellyfin.",
+            "(set EMBY_URL+EMBY_API_KEY or JELLYFIN_URL+JELLYFIN_API_KEY in .env, or use --server-url/--api-key). "
+            "Use --server-type to select Emby or Jellyfin when both are configured.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -1013,24 +1037,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Media server type: 'emby' (default) or 'jellyfin'",
     )
     parser.add_argument(
-        "--emby-url",
+        "--server-url",
         default=None,
-        help="Emby server URL (overrides config/.env)",
+        help="Server URL — overrides the env var for the active server type",
     )
     parser.add_argument(
-        "--emby-api-key",
+        "--api-key",
         default=None,
-        help="Emby API key (overrides .env)",
-    )
-    parser.add_argument(
-        "--jellyfin-url",
-        default=None,
-        help="Jellyfin server URL (used when --server-type jellyfin)",
-    )
-    parser.add_argument(
-        "--jellyfin-api-key",
-        default=None,
-        help="Jellyfin API key (used when --server-type jellyfin)",
+        help="API key — overrides the env var for the active server type",
     )
     parser.add_argument(
         "-n",
