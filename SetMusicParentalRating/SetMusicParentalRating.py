@@ -280,14 +280,18 @@ def build_config(args: argparse.Namespace) -> Config:
         server_type = explicit_type
     else:
         has_emby = bool(
-            os.environ.get("EMBY_URL")
-            or env_file.get("EMBY_URL")
-            or toml.get("emby", {}).get("url")
+            (
+                os.environ.get("EMBY_URL", "")
+                or env_file.get("EMBY_URL", "")
+                or str(toml.get("emby", {}).get("url") or "")
+            ).strip()
         )
         has_jellyfin = bool(
-            os.environ.get("JELLYFIN_URL")
-            or env_file.get("JELLYFIN_URL")
-            or toml.get("jellyfin", {}).get("url")
+            (
+                os.environ.get("JELLYFIN_URL", "")
+                or env_file.get("JELLYFIN_URL", "")
+                or str(toml.get("jellyfin", {}).get("url") or "")
+            ).strip()
         )
         if has_emby and has_jellyfin:
             print(
@@ -804,6 +808,11 @@ def process_library(config: Config) -> list[DetectionResult]:
             elif dr.server_item_id is None:
                 dr.action = "not_found_in_server"
                 log.warning("Audio file not found in server: %s", audio)
+            elif dr.server_item_id == "":
+                dr.action = "not_found_in_server"
+                log.error(
+                    "Server returned item for %s with empty 'Id'; cannot update", audio
+                )
             elif config.dry_run:
                 dr.action = "dry_run"
                 log.info("[DRY RUN] Would set %s on %s", tier, audio.name)
@@ -824,6 +833,12 @@ def process_library(config: Config) -> list[DetectionResult]:
                 dr.action = "server_unavailable"
             elif dr.server_item_id is None:
                 dr.action = "not_found_in_server"
+                log.warning("Audio file not found in server: %s", audio)
+            elif dr.server_item_id == "":
+                dr.action = "not_found_in_server"
+                log.error(
+                    "Server returned item for %s with empty 'Id'; cannot update", audio
+                )
             elif config.dry_run:
                 current_rating = (
                     server_item.get("OfficialRating", "") if server_item else ""
@@ -945,7 +960,12 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
             artist=item.get("AlbumArtist", "") or "",
             album=item.get("Album", "") or "",
         )
-        if current == target:
+        if not item_id:
+            dr.action = "not_found_in_server"
+            log.warning(
+                "Force-rating: server item at %s has no 'Id'; skipping", norm_path
+            )
+        elif current == target:
             dr.action = "already_correct"
             log.debug("Already %s: %s", target, norm_path)
         elif config.dry_run:
@@ -1116,7 +1136,7 @@ def print_summary(results: list[DetectionResult]) -> None:
         for r in sidecar_results
         if r.audio_path is not None and r.action != "no_audio_file"
     )
-    server_matched = sum(1 for r in sidecar_results if r.server_item_id is not None)
+    server_matched = sum(1 for r in sidecar_results if r.server_item_id)
     rated = sum(1 for r in results if r.action == "set")
     already = sum(1 for r in results if r.action == "already_correct")
     cleared = sum(1 for r in results if r.action == "cleared")

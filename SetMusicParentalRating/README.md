@@ -36,7 +36,7 @@ cp .env.example .env
 # edit .env → set EMBY_API_KEY and EMBY_URL (for Emby)
 #           or JELLYFIN_API_KEY and JELLYFIN_URL (for Jellyfin)
 
-# 2. Dry run — analyze without touching Emby (default)
+# 2. Dry run — analyze without touching the server (default)
 python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --dry-run --report report.csv
 
 # 3. Dry run against Jellyfin
