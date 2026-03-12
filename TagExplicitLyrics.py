@@ -33,28 +33,68 @@ except ModuleNotFoundError:
 # ---------------------------------------------------------------------------
 
 AUDIO_EXTENSIONS = frozenset(
-    {".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wma", ".wav", ".aac", ".alac", ".wv", ".ape"}
+    {
+        ".flac",
+        ".mp3",
+        ".m4a",
+        ".ogg",
+        ".opus",
+        ".wma",
+        ".wav",
+        ".aac",
+        ".alac",
+        ".wv",
+        ".ape",
+    }
 )
 SIDECAR_EXTENSIONS = frozenset({".lrc", ".txt"})
 
 DEFAULT_R_STEMS: list[str] = [
-    "fuck", "shit", "nigga", "nigger", "pussy", "cock", "cum", "faggot",
+    "fuck",
+    "shit",
+    "nigga",
+    "nigger",
+    "pussy",
+    "cock",
+    "cum",
+    "faggot",
 ]
 DEFAULT_R_EXACT: list[str] = [
-    "blowjob", "cocksucker", "motherfuck", "bullshit",
+    "blowjob",
+    "cocksucker",
+    "motherfuck",
+    "bullshit",
 ]
 DEFAULT_PG13_STEMS: list[str] = [
-    "bitch", "whore", "slut",
+    "bitch",
+    "whore",
+    "slut",
 ]
 DEFAULT_PG13_EXACT: list[str] = [
-    "hoe", "asshole", "piss",
+    "hoe",
+    "asshole",
+    "piss",
 ]
 DEFAULT_FALSE_POSITIVES: list[str] = [
-    "cockatoo", "cockatiel", "cocktail", "hancock", "shitake",
-    "dickens", "dickson", "scunthorpe", "pissarro",
-    "circumstance", "circumstan", "cucumber", "cumulative",
-    "cumbersome", "cumberbatch", "document", "incumbent",
-    "succumb", "accumulate",
+    "cockatoo",
+    "cockatiel",
+    "cocktail",
+    "hancock",
+    "shitake",
+    "dickens",
+    "dickson",
+    "scunthorpe",
+    "pissarro",
+    "circumstance",
+    "circumstan",
+    "cucumber",
+    "cumulative",
+    "cumbersome",
+    "cumberbatch",
+    "document",
+    "incumbent",
+    "succumb",
+    "accumulate",
 ]
 
 log = logging.getLogger(__name__)
@@ -82,7 +122,9 @@ class Config:
     r_exact: list[str] = field(default_factory=lambda: list(DEFAULT_R_EXACT))
     pg13_stems: list[str] = field(default_factory=lambda: list(DEFAULT_PG13_STEMS))
     pg13_exact: list[str] = field(default_factory=lambda: list(DEFAULT_PG13_EXACT))
-    false_positives: list[str] = field(default_factory=lambda: list(DEFAULT_FALSE_POSITIVES))
+    false_positives: list[str] = field(
+        default_factory=lambda: list(DEFAULT_FALSE_POSITIVES)
+    )
     dry_run: bool = False
     clear: bool = False
     force_rating: str | None = None
@@ -141,7 +183,9 @@ def load_toml_config(path: Path) -> dict:
         log.warning("Config file not found at %s — using defaults", path)
         return {}
     if tomllib is None:
-        log.warning("No TOML parser available (need Python 3.11+ or 'pip install tomli') — using defaults")
+        log.warning(
+            "No TOML parser available (need Python 3.11+ or 'pip install tomli') — using defaults"
+        )
         return {}
     try:
         with open(path, "rb") as f:
@@ -154,7 +198,9 @@ def load_toml_config(path: Path) -> dict:
 def build_config(args: argparse.Namespace) -> Config:
     """Merge config layers: defaults -> TOML -> .env -> os.environ -> CLI."""
     script_dir = Path(__file__).resolve().parent
-    toml_path = Path(args.config) if args.config else script_dir / "explicit_config.toml"
+    toml_path = (
+        Path(args.config) if args.config else script_dir / "explicit_config.toml"
+    )
     toml = load_toml_config(toml_path)
 
     env_file = load_env(script_dir / ".env")
@@ -167,7 +213,10 @@ def build_config(args: argparse.Namespace) -> Config:
         or toml.get("general", {}).get("library_path")
     )
     if not library_path_str:
-        print("Error: library_path is required (positional arg, env var, or config)", file=sys.stderr)
+        print(
+            "Error: library_path is required (positional arg, env var, or config)",
+            file=sys.stderr,
+        )
         sys.exit(1)
     library_path = Path(library_path_str)
 
@@ -193,7 +242,9 @@ def build_config(args: argparse.Namespace) -> Config:
     r_exact = det.get("r", {}).get("exact", list(DEFAULT_R_EXACT))
     pg13_stems = det.get("pg13", {}).get("stems", list(DEFAULT_PG13_STEMS))
     pg13_exact = det.get("pg13", {}).get("exact", list(DEFAULT_PG13_EXACT))
-    false_positives = det.get("ignore", {}).get("false_positives", list(DEFAULT_FALSE_POSITIVES))
+    false_positives = det.get("ignore", {}).get(
+        "false_positives", list(DEFAULT_FALSE_POSITIVES)
+    )
 
     # --- report ---
     report_path_str = args.report or toml.get("report", {}).get("output_path")
@@ -327,7 +378,9 @@ def classify_lyrics(text: str, config: Config) -> tuple[str | None, list[str]]:
         return "R", r_stem_hits + r_exact_hits
 
     # Then PG-13
-    pg13_stem_hits = detect_stems(word_tokens, config.pg13_stems, config.false_positives)
+    pg13_stem_hits = detect_stems(
+        word_tokens, config.pg13_stems, config.false_positives
+    )
     pg13_exact_hits = detect_exact(text, config._pg13_exact_patterns)
     if pg13_stem_hits or pg13_exact_hits:
         return "PG-13", pg13_stem_hits + pg13_exact_hits
@@ -377,7 +430,9 @@ class EmbyClient:
                 f"HTTP {exc.code} on {method} {path}: {body_snippet}"
             ) from exc
         except urllib.error.URLError as exc:
-            raise EmbyAPIError(f"Connection error on {method} {path}: {exc.reason}") from exc
+            raise EmbyAPIError(
+                f"Connection error on {method} {path}: {exc.reason}"
+            ) from exc
 
     def prefetch_audio_items(self) -> dict[str, dict]:
         """Paginated fetch of all Audio items. Returns {normalized_path: item}."""
@@ -458,23 +513,33 @@ def write_report(results: list[DetectionResult], path: Path) -> None:
     """Write detection results to a CSV file."""
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "artist", "album", "track", "sidecar",
-            "tier", "matched_words", "previous_rating", "action",
-        ])
+        writer.writerow(
+            [
+                "artist",
+                "album",
+                "track",
+                "sidecar",
+                "tier",
+                "matched_words",
+                "previous_rating",
+                "action",
+            ]
+        )
         for r in results:
             artist, album = _path_parts(r.audio_path)
             track = r.audio_path.name if r.audio_path else r.sidecar_path.name
-            writer.writerow([
-                artist,
-                album,
-                track,
-                str(r.sidecar_path),
-                r.tier or "",
-                "; ".join(r.matched_words),
-                r.previous_rating,
-                r.action,
-            ])
+            writer.writerow(
+                [
+                    artist,
+                    album,
+                    track,
+                    str(r.sidecar_path),
+                    r.tier or "",
+                    "; ".join(r.matched_words),
+                    r.previous_rating,
+                    r.action,
+                ]
+            )
     log.info("Report written to %s", path)
 
 
@@ -539,7 +604,9 @@ def process_library(config: Config) -> list[DetectionResult]:
                 dr.action = "dry_run"
                 log.info("[DRY RUN] Would set %s on %s", tier, audio.name)
             else:
-                current_rating = emby_item.get("OfficialRating", "") if emby_item else ""
+                current_rating = (
+                    emby_item.get("OfficialRating", "") if emby_item else ""
+                )
                 if current_rating == tier:
                     dr.action = "already_correct"
                     log.debug("Already rated %s: %s", tier, audio.name)
@@ -550,14 +617,18 @@ def process_library(config: Config) -> list[DetectionResult]:
             if dr.emby_item_id is None:
                 dr.action = "not_found_in_emby"
             elif config.dry_run:
-                current_rating = emby_item.get("OfficialRating", "") if emby_item else ""
+                current_rating = (
+                    emby_item.get("OfficialRating", "") if emby_item else ""
+                )
                 if current_rating:
                     dr.action = "dry_run_clear"
                     log.info("[DRY RUN] Would clear rating from %s", audio.name)
                 else:
                     dr.action = "skipped"
             else:
-                current_rating = emby_item.get("OfficialRating", "") if emby_item else ""
+                current_rating = (
+                    emby_item.get("OfficialRating", "") if emby_item else ""
+                )
                 if current_rating:
                     dr.action = _apply_rating(emby, dr.emby_item_id, "", audio.name)
                     if dr.action == "set":
@@ -590,12 +661,15 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
     # Filter to items under the library path (path-aware, avoids /music matching /music2)
     lib_root = Path(_normalize_path(str(config.library_path)))
     items_in_scope = {
-        path: item for path, item in all_items.items()
+        path: item
+        for path, item in all_items.items()
         if Path(path).is_relative_to(lib_root)
     }
     log.info(
         "Force-rating: %d items under %s (of %d total)",
-        len(items_in_scope), config.library_path, len(all_items),
+        len(items_in_scope),
+        config.library_path,
+        len(all_items),
     )
 
     results: list[DetectionResult] = []
@@ -652,42 +726,55 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="TagExplicitLyrics",
         description="Scan sidecar lyric files for explicit content and set "
-                    "OfficialRating on matching tracks via the Emby API.",
+        "OfficialRating on matching tracks via the Emby API.",
     )
     parser.add_argument(
-        "library_path", nargs="?", default=None,
+        "library_path",
+        nargs="?",
+        default=None,
         help="Library root directory (overrides config)",
     )
     parser.add_argument(
-        "--config", default=None,
+        "--config",
+        default=None,
         help="Path to TOML config file (default: explicit_config.toml next to script)",
     )
     parser.add_argument(
-        "--emby-url", default=None,
+        "--emby-url",
+        default=None,
         help="Emby server URL (overrides config/.env)",
     )
     parser.add_argument(
-        "--emby-api-key", default=None,
+        "--emby-api-key",
+        default=None,
         help="Emby API key (overrides .env)",
     )
     parser.add_argument(
-        "-n", "--dry-run", action="store_true",
+        "-n",
+        "--dry-run",
+        action="store_true",
         help="Analyze only — no Emby updates",
     )
     parser.add_argument(
-        "-v", "--verbose", action="store_true",
+        "-v",
+        "--verbose",
+        action="store_true",
         help="Debug logging",
     )
     parser.add_argument(
-        "--report", default=None,
+        "--report",
+        default=None,
         help="CSV report output path",
     )
     parser.add_argument(
-        "--clear", action="store_true",
+        "--clear",
+        action="store_true",
         help="Clear ratings from tracks whose sidecars exist but contain no explicit words",
     )
     parser.add_argument(
-        "--force-rating", default=None, metavar="RATING",
+        "--force-rating",
+        default=None,
+        metavar="RATING",
         help="Bypass detection; set this rating on ALL audio tracks in the library via Emby",
     )
     return parser
@@ -707,7 +794,9 @@ def print_summary(results: list[DetectionResult]) -> None:
     r_count = sum(1 for r in results if r.tier == "R")
     pg13_count = sum(1 for r in results if r.tier == "PG-13")
     clean = sum(1 for r in results if r.tier is None)
-    audio_found = sum(1 for r in results if r.audio_path is not None and r.action != "no_audio_file")
+    audio_found = sum(
+        1 for r in results if r.audio_path is not None and r.action != "no_audio_file"
+    )
     emby_matched = sum(1 for r in results if r.emby_item_id is not None)
     rated = sum(1 for r in results if r.action == "set")
     already = sum(1 for r in results if r.action == "already_correct")
