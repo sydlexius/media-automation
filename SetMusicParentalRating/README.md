@@ -1,10 +1,10 @@
-# TagExplicitLyrics
+# SetMusicParentalRating
 
-Standalone utility for managing an [Emby](https://emby.media/) media server.
+Standalone utility for managing an [Emby](https://emby.media/) or [Jellyfin](https://jellyfin.org/) media server.
 
-## TagExplicitLyrics.py
+## SetMusicParentalRating.py
 
-Scans sidecar lyric files (`.lrc`, `.txt`) for explicit content and sets `OfficialRating` on matching audio tracks via the Emby API.
+Scans sidecar lyric files (`.lrc`, `.txt`) for explicit content and sets `OfficialRating` on matching audio tracks via the Emby or Jellyfin API.
 
 ### How It Works
 
@@ -14,9 +14,9 @@ Scans sidecar lyric files (`.lrc`, `.txt`) for explicit content and sets `Offici
 4. Runs tiered word detection against configurable word lists:
    - **R** — strong profanity (stem matching: `fuck`, `shit`, etc.)
    - **PG-13** — moderate profanity (stem matching: `bitch`, `whore`, etc.)
-5. Looks up the audio file in Emby via a bulk prefetch of all Audio items
-6. Sets `OfficialRating` on the Emby item via a GET-then-POST round-trip
-7. *(Optional)* Genre pass: any Emby audio item whose `Genres` field contains an entry from `[detection.g_genres]` and has no matching sidecar receives a `G` rating
+5. Looks up the audio file in the media server via a bulk prefetch of all Audio items
+6. Sets `OfficialRating` on the item via a GET-then-POST round-trip
+7. *(Optional)* Genre pass: any audio item whose `Genres` field contains an entry from `[detection.g_genres]` and has no matching sidecar receives a `G` rating
 
 **Priority rule**: any track with a matching sidecar file — explicit or clean — is excluded from the genre pass entirely. Sidecar-scanned tracks that are clean will receive no rating from the genre pass, even if their genre would otherwise qualify for G.
 
@@ -31,30 +31,35 @@ Scans sidecar lyric files (`.lrc`, `.txt`) for explicit content and sets `Offici
 ```bash
 # Run from the repo root:
 
-# 1. Copy the example env file and add your API key
+# 1. Copy the example env file and add your API key(s)
 cp .env.example .env
-# edit .env → set EMBY_API_KEY and EMBY_URL
+# edit .env → set EMBY_API_KEY and EMBY_URL (for Emby)
+#           or JELLYFIN_API_KEY and JELLYFIN_URL (for Jellyfin)
 
-# 2. Dry run — analyze without touching Emby
-python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/music --dry-run --report report.csv
+# 2. Dry run — analyze without touching Emby (default)
+python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --dry-run --report report.csv
 
-# 3. Live run — set ratings
-python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/music --report report.csv
+# 3. Dry run against Jellyfin
+python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --server-type jellyfin --dry-run
 
-# 4. Force-rate a known-clean library (e.g., classical)
-python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/classical --force-rating G
+# 4. Live run — set ratings
+python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --report report.csv
 
-# 5. Clear stale ratings after fixing sidecar typos
-python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/music --clear
+# 5. Force-rate a known-clean library (e.g., classical)
+python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/classical --force-rating G
 
-# 6. Discover what genre strings exist in your library (for g_genres config)
-python3 TagExplicitLyrics/TagExplicitLyrics.py --list-genres
+# 6. Clear stale ratings after fixing sidecar typos
+python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --clear
+
+# 7. Discover what genre strings exist in your library (for g_genres config)
+python3 SetMusicParentalRating/SetMusicParentalRating.py --list-genres
+python3 SetMusicParentalRating/SetMusicParentalRating.py --server-type jellyfin --list-genres
 ```
 
 ### CLI Reference
 
 ```
-TagExplicitLyrics.py [library_path] [options]
+SetMusicParentalRating.py [library_path] [options]
 
 Positional:
   library_path              Library root (overrides config)
@@ -62,14 +67,17 @@ Positional:
 Options:
   --config PATH             TOML config file (default: explicit_config.toml in script dir)
   --env-file PATH           .env file to load (default: .env in repo root; e.g. --env-file .env.prod)
+  --server-type TYPE        Media server type: 'emby' (default) or 'jellyfin'
   --emby-url URL            Emby server URL
   --emby-api-key KEY        Emby API key
-  -n, --dry-run             Analyze only, no Emby updates
+  --jellyfin-url URL        Jellyfin server URL (used when --server-type jellyfin)
+  --jellyfin-api-key KEY    Jellyfin API key (used when --server-type jellyfin)
+  -n, --dry-run             Analyze only, no server updates
   -v, --verbose             Debug logging
   --report PATH             CSV report output path
   --clear                   Clear ratings from tracks whose sidecars are now clean
   --force-rating RATING     Skip detection; set this rating on ALL tracks in the path
-  --list-genres             Print all Audio genre tags from Emby, then exit
+  --list-genres             Print all Audio genre tags from the server, then exit
                             (useful for building [detection.g_genres] in the config;
                             library_path is not required)
 ```
@@ -80,24 +88,29 @@ Settings are merged in priority order: **CLI flags > env vars > `.env` file > TO
 
 **`.env`** — secrets only (one per environment):
 ```bash
-# .env — local dev
-EMBY_API_KEY=your-key-here
+# .env — local dev (Emby)
+EMBY_API_KEY=your-emby-key-here
 EMBY_URL=http://localhost:8096
 
+# .env — local dev (Jellyfin)
+JELLYFIN_API_KEY=your-jellyfin-key-here
+JELLYFIN_URL=http://localhost:8097
+SERVER_TYPE=jellyfin
+
 # Use --env-file .env.prod to load a different env file
-# Exported EMBY_URL / EMBY_API_KEY still take precedence
+# Exported env vars still take precedence
 ```
 
 **`explicit_config.toml`** — word lists, library path, report output, and genre allow-list. Copy `explicit_config.example.toml` to get started. The script works without any config file using sensible defaults.
 
-**`[detection.g_genres]`** — optional genre-based G rating. Any Emby audio item whose `Genres` field contains a listed entry (matched **case-insensitively**) and has no matching sidecar file will receive a `G` rating. Omitting the section or leaving `genres = []` disables the feature entirely.
+**`[detection.g_genres]`** — optional genre-based G rating. Any audio item whose `Genres` field contains a listed entry (matched **case-insensitively**) and has no matching sidecar file will receive a `G` rating. Omitting the section or leaving `genres = []` disables the feature entirely.
 
 ```toml
 [detection.g_genres]
 genres = ["Classical", "Ambient", "Instrumental", "Chiptune"]
 ```
 
-Run `--list-genres` to see all genre strings present in your Emby library.
+Run `--list-genres` to see all genre strings present in your library.
 
 ### Detection Details
 
@@ -113,8 +126,8 @@ The `--report` flag produces a CSV with columns useful for admin review:
 
 | Column | Description |
 |--------|-------------|
-| `artist` | From Emby metadata (`AlbumArtist`), falls back to directory structure |
-| `album` | From Emby metadata (`Album`), falls back to directory structure |
+| `artist` | From server metadata (`AlbumArtist`), falls back to directory structure |
+| `album` | From server metadata (`Album`), falls back to directory structure |
 | `track` | Audio filename |
 | `sidecar` | Sidecar filename |
 | `tier` | `R`, `PG-13`, `G` (genre-matched), or empty (clean) |
@@ -124,9 +137,15 @@ The `--report` flag produces a CSV with columns useful for admin review:
 
 This lets an admin spot false positives caused by lyric transcription errors (e.g., "cuming" instead of "coming") and take corrective action on the sidecar files.
 
-### Emby API Notes
+### API Notes
 
-- Auth: `X-Emby-Token` header on every request
+Both Emby and Jellyfin use the same REST API shape. The only client-visible difference is the authentication header:
+
+| Server | Auth header |
+|--------|-------------|
+| Emby | `X-Emby-Token` |
+| Jellyfin | `X-MediaBrowser-Token` |
+
 - Item listing: `GET /Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path,OfficialRating,AlbumArtist,Album,Genres` (paginated)
 - Item fetch: `GET /Users/{userId}/Items/{itemId}` (user-scoped; `GET /Items/{id}` returns 404)
 - Item update: `POST /Items/{itemId}` with the full item body (GET-then-POST round-trip preserves existing metadata)
