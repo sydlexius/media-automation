@@ -54,8 +54,8 @@ Positional:
   library_path              Library root (overrides config)
 
 Options:
-  --config PATH             TOML config file (default: explicit_config.toml)
-  --env-file PATH           .env file to load (default: .env; e.g. .env.prod)
+  --config PATH             TOML config file (default: explicit_config.toml in script dir)
+  --env-file PATH           .env file to load (default: .env in script dir; e.g. .env.prod)
   --emby-url URL            Emby server URL
   --emby-api-key KEY        Emby API key
   -n, --dry-run             Analyze only, no Emby updates

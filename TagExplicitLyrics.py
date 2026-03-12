@@ -206,9 +206,7 @@ def build_config(args: argparse.Namespace) -> Config:
     toml = load_toml_config(toml_path)
 
     if args.env_file:
-        env_path = Path(args.env_file)
-        if not env_path.is_absolute():
-            env_path = script_dir / env_path
+        env_path = Path(args.env_file).expanduser()
         if not env_path.is_file():
             print(
                 f"Error: specified env file does not exist or is not a regular file: {env_path}",
