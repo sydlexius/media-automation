@@ -22,23 +22,23 @@ Currently contains one script: `TagExplicitLyrics/TagExplicitLyrics.py` — scan
     ├── explicit_config.toml           # gitignored (copy of example)
     ├── explicit_config.uat.toml       # gitignored
     ├── explicit_config.prod.toml      # gitignored
-    └── tests/
+    └── tests/                         # not yet present; CI skips if absent
 ```
 
 ## Commands
 
 ### Run the script
 ```bash
-cd TagExplicitLyrics
+# Run from the repo root:
 
 # Dry run (analysis only, no Emby writes)
-python3 TagExplicitLyrics.py /path/to/music --dry-run --report report.csv
+python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/music --dry-run --report report.csv
 
 # Live run
-python3 TagExplicitLyrics.py /path/to/music --report report.csv
+python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/music --report report.csv
 
 # Production server
-python3 TagExplicitLyrics.py /path/to/music --env-file ../.env.prod --config explicit_config.prod.toml
+python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/music --env-file .env.prod --config TagExplicitLyrics/explicit_config.prod.toml
 ```
 
 ### Lint & Format

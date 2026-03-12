@@ -29,24 +29,26 @@ Scans sidecar lyric files (`.lrc`, `.txt`) for explicit content and sets `Offici
 ### Quick Start
 
 ```bash
+# Run from the repo root:
+
 # 1. Copy the example env file and add your API key
 cp .env.example .env
 # edit .env → set EMBY_API_KEY and EMBY_URL
 
 # 2. Dry run — analyze without touching Emby
-python3 TagExplicitLyrics.py /path/to/music --dry-run --report report.csv
+python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/music --dry-run --report report.csv
 
 # 3. Live run — set ratings
-python3 TagExplicitLyrics.py /path/to/music --report report.csv
+python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/music --report report.csv
 
 # 4. Force-rate a known-clean library (e.g., classical)
-python3 TagExplicitLyrics.py /path/to/classical --force-rating G
+python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/classical --force-rating G
 
 # 5. Clear stale ratings after fixing sidecar typos
-python3 TagExplicitLyrics.py /path/to/music --clear
+python3 TagExplicitLyrics/TagExplicitLyrics.py /path/to/music --clear
 
 # 6. Discover what genre strings exist in your library (for g_genres config)
-python3 TagExplicitLyrics.py --list-genres
+python3 TagExplicitLyrics/TagExplicitLyrics.py --list-genres
 ```
 
 ### CLI Reference
@@ -59,7 +61,7 @@ Positional:
 
 Options:
   --config PATH             TOML config file (default: explicit_config.toml in script dir)
-  --env-file PATH           .env file to load (default: .env in script dir; e.g. .env.prod)
+  --env-file PATH           .env file to load (default: .env in repo root; e.g. --env-file .env.prod)
   --emby-url URL            Emby server URL
   --emby-api-key KEY        Emby API key
   -n, --dry-run             Analyze only, no Emby updates

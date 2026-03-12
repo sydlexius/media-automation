@@ -4,7 +4,7 @@
 # Precedence: CLI flags > environment variables > .env file > this file > defaults
 #
 # Environment files:
-#   The script loads .env from the script directory by default.
+#   The script loads .env from the repo root by default.
 #   Use --env-file to load a different file (e.g. --env-file .env.prod).
 #   To connect to Emby and apply ratings, set EMBY_API_KEY and EMBY_URL in your .env.
 

@@ -19,4 +19,4 @@ cp .env.example .env
 
 For production, create a `.env.prod` alongside `.env` with your production server credentials. Scripts accept `--env-file ../.env.prod` to load it.
 
-Each script has its own subdirectory with a `README.md`, `explicit_config.example.toml`, and `tests/`.
+Each script has its own subdirectory with a `README.md` and any script-specific configuration or support files (for example, `explicit_config.example.toml` and a `tests/` directory where applicable).
