@@ -54,7 +54,8 @@ Positional:
   library_path              Library root (overrides config)
 
 Options:
-  --config PATH             TOML config file (default: explicit_config.toml)
+  --config PATH             TOML config file (default: explicit_config.toml in script dir)
+  --env-file PATH           .env file to load (default: .env in script dir; e.g. .env.prod)
   --emby-url URL            Emby server URL
   --emby-api-key KEY        Emby API key
   -n, --dry-run             Analyze only, no Emby updates
@@ -68,13 +69,17 @@ Options:
 
 Settings are merged in priority order: **CLI flags > env vars > `.env` file > TOML config > hardcoded defaults**.
 
-**`.env`** — secrets only:
-```
+**`.env`** — secrets only (one per environment):
+```bash
+# .env — local dev
 EMBY_API_KEY=your-key-here
 EMBY_URL=http://localhost:8096
+
+# Use --env-file .env.prod to load a different env file
+# Exported EMBY_URL / EMBY_API_KEY still take precedence
 ```
 
-**`explicit_config.toml`** — word lists, library path, report output. See the included example file. The script works without any config file using sensible defaults.
+**`explicit_config.toml`** — word lists, library path, report output. Copy `explicit_config.example.toml` to get started. The script works without any config file using sensible defaults.
 
 ### Detection Details
 
@@ -90,8 +95,8 @@ The `--report` flag produces a CSV with columns useful for admin review:
 
 | Column | Description |
 |--------|-------------|
-| `artist` | Derived from directory structure (Artist/Album/Track) |
-| `album` | Derived from directory structure |
+| `artist` | From Emby metadata (`AlbumArtist`), falls back to directory structure |
+| `album` | From Emby metadata (`Album`), falls back to directory structure |
 | `track` | Audio filename |
 | `sidecar` | Sidecar filename |
 | `tier` | `R`, `PG-13`, or empty (clean) |
@@ -104,6 +109,6 @@ This lets an admin spot false positives caused by lyric transcription errors (e.
 ### Emby API Notes
 
 - Auth: `X-Emby-Token` header on every request
-- Item listing: `GET /Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path,OfficialRating` (paginated)
+- Item listing: `GET /Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path,OfficialRating,AlbumArtist,Album` (paginated)
 - Item fetch: `GET /Users/{userId}/Items/{itemId}` (user-scoped; `GET /Items/{id}` returns 404)
 - Item update: `POST /Items/{itemId}` with the full item body (GET-then-POST round-trip preserves existing metadata)

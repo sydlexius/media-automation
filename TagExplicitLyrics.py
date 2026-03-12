@@ -142,6 +142,8 @@ class DetectionResult:
     action: str = ""  # set | cleared | skipped | already_correct | not_found_in_emby |
     #                    emby_unavailable | error | no_audio_file | dry_run | dry_run_clear
     previous_rating: str = ""
+    artist: str = ""
+    album: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +151,7 @@ class DetectionResult:
 # ---------------------------------------------------------------------------
 
 
-def load_env(path: Path) -> dict[str, str]:
+def load_env(path: Path, *, required: bool = False) -> dict[str, str]:
     """Parse a .env file into a dict. Skips comments and blank lines."""
     env: dict[str, str] = {}
     if not path.is_file():
@@ -170,6 +172,9 @@ def load_env(path: Path) -> dict[str, str]:
                 value = value[1:-1]
             env[key] = value
     except OSError as exc:
+        if required:
+            print(f"Error: could not read env file: {path} ({exc})", file=sys.stderr)
+            sys.exit(1)
         log.warning("Could not read .env file %s: %s", path, exc)
     return env
 
@@ -200,7 +205,17 @@ def build_config(args: argparse.Namespace) -> Config:
     )
     toml = load_toml_config(toml_path)
 
-    env_file = load_env(script_dir / ".env")
+    if args.env_file:
+        env_path = Path(args.env_file).expanduser()
+        if not env_path.is_file():
+            print(
+                f"Error: specified env file does not exist or is not a regular file: {env_path}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    else:
+        env_path = script_dir / ".env"
+    env_file = load_env(env_path, required=bool(args.env_file))
 
     # --- library_path ---
     library_path_str = (
@@ -441,7 +456,7 @@ class EmbyClient:
             result = self._request(
                 "GET",
                 f"/Items?Recursive=true&IncludeItemTypes=Audio"
-                f"&Fields=Path,OfficialRating"
+                f"&Fields=Path,OfficialRating,AlbumArtist,Album"
                 f"&StartIndex={start_index}&Limit={page_size}",
             )
             if not result:
@@ -498,19 +513,31 @@ def _normalize_path(p: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _path_parts(audio_path: Path | None) -> tuple[str, str]:
-    """Extract artist and album from typical Artist/Album/Track path layout."""
+def _path_parts(
+    audio_path: Path | None, library_path: Path | None = None
+) -> tuple[str, str]:
+    """Best-effort fallback using the path relative to the library root."""
     if audio_path is None:
         return "", ""
-    parts = audio_path.parts
+    if library_path is not None:
+        try:
+            parts = audio_path.relative_to(library_path).parts
+        except ValueError:
+            parts = audio_path.parts
+    else:
+        parts = audio_path.parts
+    # Artist/Album/Track (3+ segments) → (artist, album)
     if len(parts) >= 3:
         return parts[-3], parts[-2]
-    if len(parts) >= 2:
-        return parts[-2], ""
+    # Album/Track (2 segments) → (empty, album)
+    if len(parts) == 2:
+        return "", parts[-2]
     return "", ""
 
 
-def write_report(results: list[DetectionResult], path: Path) -> None:
+def write_report(
+    results: list[DetectionResult], path: Path, library_path: Path | None = None
+) -> None:
     """Write detection results to a CSV file."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -529,7 +556,9 @@ def write_report(results: list[DetectionResult], path: Path) -> None:
                 ]
             )
             for r in results:
-                artist, album = _path_parts(r.audio_path)
+                path_artist, path_album = _path_parts(r.audio_path, library_path)
+                artist = r.artist or path_artist
+                album = r.album or path_album
                 track = (r.audio_path or r.sidecar_path or Path()).name
                 writer.writerow(
                     [
@@ -608,6 +637,8 @@ def process_library(config: Config) -> list[DetectionResult]:
         if emby_item:
             dr.emby_item_id = emby_item.get("Id")
             dr.previous_rating = emby_item.get("OfficialRating", "") or ""
+            dr.artist = emby_item.get("AlbumArtist", "") or ""
+            dr.album = emby_item.get("Album", "") or ""
 
         # Decide action
         if tier is not None:
@@ -704,6 +735,8 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
             tier=target,
             emby_item_id=item_id,
             previous_rating=current,
+            artist=item.get("AlbumArtist", "") or "",
+            album=item.get("Album", "") or "",
         )
         if current == target:
             dr.action = "already_correct"
@@ -760,6 +793,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         default=None,
         help="Path to TOML config file (default: explicit_config.toml next to script)",
+    )
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help="Path to .env file (default: .env next to script; e.g. --env-file .env.prod)",
     )
     parser.add_argument(
         "--emby-url",
@@ -859,7 +897,7 @@ def main() -> None:
         results = process_library(config)
 
     if config.report_path:
-        write_report(results, config.report_path)
+        write_report(results, config.report_path, config.library_path)
 
     print_summary(results)
 

@@ -1,0 +1,52 @@
+# Copy this file to explicit_config.toml and edit to taste.
+# The script loads explicit_config.toml by default (override with --config).
+#
+# Precedence: CLI flags > environment variables > .env file > this file > defaults
+#
+# Environment files:
+#   The script loads .env from the script directory by default.
+#   Use --env-file to load a different file (e.g. --env-file .env.prod).
+#   To connect to Emby and apply ratings, set EMBY_API_KEY and EMBY_URL in your .env.
+
+[general]
+# A single library path. To scan multiple libraries, run the script once per
+# library or use a wrapper script. The library_path can also be passed as the
+# first positional CLI argument or via TAGLRC_LIBRARY_PATH env var.
+library_path = ""
+
+[emby]
+url = "http://localhost:8096"
+# API key goes in .env file as EMBY_API_KEY — do not put secrets in this file.
+
+[detection.r]
+stems = ["fuck", "shit", "nigga", "nigger", "pussy", "cock", "cum", "faggot"]
+exact = ["blowjob", "cocksucker", "motherfuck", "bullshit"]
+
+[detection.pg13]
+stems = ["bitch", "whore", "slut"]
+exact = ["hoe", "asshole", "piss"]
+
+[detection.ignore]
+false_positives = [
+    "cockatoo",
+    "cockatiel",
+    "cocktail",
+    "hancock",
+    "dickens",
+    "dickson",
+    "scunthorpe",
+    "pissarro",
+    "circumstance",
+    "circumstan",
+    "cucumber",
+    "cumulative",
+    "cumbersome",
+    "cumberbatch",
+    "document",
+    "incumbent",
+    "succumb",
+    "accumulate",
+]
+
+[report]
+output_path = "explicit_report.csv"
