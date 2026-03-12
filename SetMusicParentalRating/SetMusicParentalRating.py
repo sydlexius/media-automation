@@ -145,9 +145,11 @@ class DetectionResult:
     audio_path: Path | None
     tier: str | None  # "R", "PG-13", "G" (genre-matched), or None (clean)
     matched_words: list[str] = field(default_factory=list)
-    emby_item_id: str | None = None
-    action: str = ""  # set | cleared | skipped | already_correct | not_found_in_emby |
-    #                    emby_unavailable | error | no_audio_file | dry_run | dry_run_clear |
+    server_item_id: str | None = None
+    action: str = (
+        ""  # set | cleared | skipped | already_correct | not_found_in_server |
+    )
+    #                    server_unavailable | error | no_audio_file | dry_run | dry_run_clear |
     #                    g_genre | g_genre_already_correct | dry_run_g_genre
     previous_rating: str = ""
     artist: str = ""
@@ -789,7 +791,7 @@ def process_library(config: Config) -> list[DetectionResult]:
         sidecar_handled_paths.add(norm_audio)
         server_item = server_items.get(norm_audio)
         if server_item:
-            dr.emby_item_id = server_item.get("Id")
+            dr.server_item_id = server_item.get("Id")
             dr.previous_rating = server_item.get("OfficialRating", "") or ""
             dr.artist = server_item.get("AlbumArtist", "") or ""
             dr.album = server_item.get("Album", "") or ""
@@ -798,9 +800,9 @@ def process_library(config: Config) -> list[DetectionResult]:
         if tier is not None:
             # Explicit content found — set rating
             if client is None:
-                dr.action = "emby_unavailable"
-            elif dr.emby_item_id is None:
-                dr.action = "not_found_in_emby"
+                dr.action = "server_unavailable"
+            elif dr.server_item_id is None:
+                dr.action = "not_found_in_server"
                 log.warning("Audio file not found in server: %s", audio)
             elif config.dry_run:
                 dr.action = "dry_run"
@@ -813,13 +815,15 @@ def process_library(config: Config) -> list[DetectionResult]:
                     dr.action = "already_correct"
                     log.debug("Already rated %s: %s", tier, audio.name)
                 else:
-                    dr.action = _apply_rating(client, dr.emby_item_id, tier, audio.name)
+                    dr.action = _apply_rating(
+                        client, dr.server_item_id, tier, audio.name
+                    )
         elif config.clear:
             # Clean content + --clear flag — remove rating if set
             if client is None:
-                dr.action = "emby_unavailable"
-            elif dr.emby_item_id is None:
-                dr.action = "not_found_in_emby"
+                dr.action = "server_unavailable"
+            elif dr.server_item_id is None:
+                dr.action = "not_found_in_server"
             elif config.dry_run:
                 current_rating = (
                     server_item.get("OfficialRating", "") if server_item else ""
@@ -834,7 +838,7 @@ def process_library(config: Config) -> list[DetectionResult]:
                     server_item.get("OfficialRating", "") if server_item else ""
                 )
                 if current_rating:
-                    dr.action = _apply_rating(client, dr.emby_item_id, "", audio.name)
+                    dr.action = _apply_rating(client, dr.server_item_id, "", audio.name)
                     if dr.action == "set":
                         dr.action = "cleared"
                 else:
@@ -868,7 +872,7 @@ def process_library(config: Config) -> list[DetectionResult]:
                 audio_path=Path(norm_path),
                 tier="G",
                 matched_words=[matched_genre],
-                emby_item_id=item_id,
+                server_item_id=item_id,
                 previous_rating=current_rating,
                 artist=item.get("AlbumArtist", "") or "",
                 album=item.get("Album", "") or "",
@@ -936,7 +940,7 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
             sidecar_path=None,
             audio_path=Path(norm_path),
             tier=target,
-            emby_item_id=item_id,
+            server_item_id=item_id,
             previous_rating=current,
             artist=item.get("AlbumArtist", "") or "",
             album=item.get("Album", "") or "",
@@ -1112,13 +1116,13 @@ def print_summary(results: list[DetectionResult]) -> None:
         for r in sidecar_results
         if r.audio_path is not None and r.action != "no_audio_file"
     )
-    server_matched = sum(1 for r in sidecar_results if r.emby_item_id is not None)
+    server_matched = sum(1 for r in sidecar_results if r.server_item_id is not None)
     rated = sum(1 for r in results if r.action == "set")
     already = sum(1 for r in results if r.action == "already_correct")
     cleared = sum(1 for r in results if r.action == "cleared")
     dry = sum(1 for r in results if r.action.startswith("dry_run"))
     errors = sum(1 for r in results if r.action == "error")
-    server_unavail = sum(1 for r in results if r.action == "emby_unavailable")
+    server_unavail = sum(1 for r in results if r.action == "server_unavailable")
     g_genre_rated = sum(1 for r in genre_results if r.action == "g_genre")
     g_genre_already = sum(
         1 for r in genre_results if r.action == "g_genre_already_correct"

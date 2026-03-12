@@ -58,7 +58,7 @@ python3 SetMusicParentalRating/SetMusicParentalRating.py --server-type jellyfin 
 
 ### CLI Reference
 
-```
+```text
 SetMusicParentalRating.py [library_path] [options]
 
 Positional:
@@ -134,7 +134,7 @@ The `--report` flag produces a CSV with columns useful for admin review:
 | `tier` | `R`, `PG-13`, `G` (genre-matched), or empty (clean) |
 | `matched_words` | Semicolon-separated list of words that triggered detection |
 | `previous_rating` | What `OfficialRating` was before this run |
-| `action` | `set` · `cleared` · `already_correct` · `skipped` · `not_found_in_emby` · `emby_unavailable` · `no_audio_file` · `error` · `dry_run` · `dry_run_clear` · `g_genre` · `g_genre_already_correct` · `dry_run_g_genre` |
+| `action` | `set` · `cleared` · `already_correct` · `skipped` · `not_found_in_server` · `server_unavailable` · `no_audio_file` · `error` · `dry_run` · `dry_run_clear` · `g_genre` · `g_genre_already_correct` · `dry_run_g_genre` |
 
 This lets an admin spot false positives caused by lyric transcription errors (e.g., "cuming" instead of "coming") and take corrective action on the sidecar files.
 
