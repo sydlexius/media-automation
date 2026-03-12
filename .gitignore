@@ -1,5 +1,7 @@
-# Secrets
-.env
+# Secrets / local config
+.env*
+!.env.example
+explicit_config.toml
 
 # Python
 __pycache__/
