@@ -353,6 +353,7 @@ def build_config(args: argparse.Namespace) -> Config:
     )
     g_genres = det.get("g_genres", {}).get("genres", [])
     embedded_lyrics = det.get("embedded_lyrics", False)
+    lyrics_priority_toml = det.get("lyrics_priority", "sidecar")
 
     # --- report ---
     report_path_str = args.report or toml.get("report", {}).get("output_path")
@@ -376,6 +377,9 @@ def build_config(args: argparse.Namespace) -> Config:
         embedded_lyrics=embedded_lyrics
         if args.embedded_lyrics is None
         else args.embedded_lyrics,
+        lyrics_priority=lyrics_priority_toml
+        if args.lyrics_priority is None
+        else args.lyrics_priority,
     )
 
 
@@ -1287,6 +1291,16 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help="Fall back to embedded tag lyrics when no sidecar file exists (default: off)",
+    )
+    parser.add_argument(
+        "--lyrics-priority",
+        default=None,
+        choices=("sidecar", "embedded", "most_explicit"),
+        help=(
+            "Which source wins when a track has both a sidecar (.lrc/.txt) and embedded lyrics. "
+            "Only applies when --embedded-lyrics is on. "
+            "Default: sidecar. most_explicit picks whichever detected the higher tier."
+        ),
     )
     return parser
 
