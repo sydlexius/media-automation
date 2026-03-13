@@ -608,10 +608,11 @@ class MediaServerClient:
         start_index = 0
         page_size = 500
         total = 0
+        uid = self._get_user_id()
         while True:
             result = self._request(
                 "GET",
-                f"/Items?Recursive=true&IncludeItemTypes=Audio"
+                f"/Users/{uid}/Items?Recursive=true&IncludeItemTypes=Audio"
                 f"&Fields={fields}"
                 f"&StartIndex={start_index}&Limit={page_size}",
             )
@@ -1259,7 +1260,12 @@ def print_summary(results: list[DetectionResult]) -> None:
         and r.audio_path is not None
         and r.action != "no_audio_file"
     )
-    server_matched = sum(1 for r in scan_results if r.server_item_id)
+    sidecar_server_matched = sum(
+        1 for r in scan_results if r.source == "sidecar" and r.server_item_id
+    )
+    embedded_server_matched = sum(
+        1 for r in scan_results if r.source == "embedded" and r.server_item_id
+    )
     rated = sum(1 for r in results if r.action == "set")
     already = sum(1 for r in results if r.action == "already_correct")
     cleared = sum(1 for r in results if r.action == "cleared")
@@ -1282,7 +1288,11 @@ def print_summary(results: list[DetectionResult]) -> None:
         print(f"    PG-13:             {pg13_count}")
         print(f"    Clean:             {clean}")
         print(f"  Audio files found:   {audio_found} / {sidecar_count}")
-        print(f"  Server items matched: {server_matched} / {audio_found}")
+        print(f"  Server items matched: {sidecar_server_matched} / {audio_found}")
+        if embedded_count:
+            print(
+                f"  Embedded matched:     {embedded_server_matched} / {embedded_count}"
+            )
     print(f"  Ratings set:         {rated}")
     print(f"  Already correct:     {already}")
     print(f"  Ratings cleared:     {cleared}")
