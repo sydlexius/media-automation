@@ -843,6 +843,16 @@ def _normalize_path(p: str) -> str:
     return os.path.normcase(os.path.normpath(p)).replace("\\", "/")
 
 
+def _item_fields(item: dict) -> tuple[str, str, str, str]:
+    """Extract (item_id, previous_rating, artist, album) from a server item."""
+    return (
+        item.get("Id", "") or "",
+        item.get("OfficialRating", "") or "",
+        item.get("AlbumArtist", "") or "",
+        item.get("Album", "") or "",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
@@ -990,10 +1000,11 @@ def process_library(config: Config) -> list[DetectionResult]:
         handled_paths.add(norm_audio)
         server_item = server_items.get(norm_audio)
         if server_item:
-            dr.server_item_id = server_item.get("Id")
-            dr.previous_rating = server_item.get("OfficialRating", "") or ""
-            dr.artist = server_item.get("AlbumArtist", "") or ""
-            dr.album = server_item.get("Album", "") or ""
+            item_id, prev_rating, artist, album = _item_fields(server_item)
+            dr.server_item_id = item_id or None
+            dr.previous_rating = prev_rating
+            dr.artist = artist
+            dr.album = album
 
         # Augment sidecar classification with embedded lyrics if present
         if config.embedded_lyrics and server_item and client is not None:
@@ -1022,70 +1033,32 @@ def process_library(config: Config) -> list[DetectionResult]:
 
         # Decide action
         if tier is not None:
-            # Explicit content found — set rating
-            if client is None:
-                dr.action = "server_unavailable"
-            elif dr.server_item_id is None:
-                dr.action = "not_found_in_server"
-                log.warning("Audio file not found in server: %s", audio)
-            elif dr.server_item_id == "":
-                dr.action = "not_found_in_server"
-                log.error(
-                    "Server returned item for %s with empty 'Id'; cannot update", audio
-                )
-            elif config.dry_run:
-                dr.action = "dry_run"
-                log.info("[DRY RUN] Would set %s on %s", tier, audio.name)
-            else:
-                current_rating = (
-                    server_item.get("OfficialRating", "") if server_item else ""
-                )
-                if current_rating == tier:
-                    dr.action = "already_correct"
-                    log.debug("Already rated %s: %s", tier, audio.name)
-                else:
-                    dr.action = _apply_rating(
-                        client, dr.server_item_id, tier, audio.name
-                    )
+            dr.action = _decide_rating_action(
+                client=client,
+                item_id=dr.server_item_id,
+                tier=tier,
+                current_rating=dr.previous_rating,
+                label=str(audio),
+                dry_run=config.dry_run,
+            )
         elif config.clear:
-            # Clean content + --clear flag — remove rating if set
-            if client is None:
-                dr.action = "server_unavailable"
-            elif dr.server_item_id is None:
-                dr.action = "not_found_in_server"
-                log.warning("Audio file not found in server: %s", audio)
-            elif dr.server_item_id == "":
-                dr.action = "not_found_in_server"
-                log.error(
-                    "Server returned item for %s with empty 'Id'; cannot update", audio
-                )
-            elif config.dry_run:
-                current_rating = (
-                    server_item.get("OfficialRating", "") if server_item else ""
-                )
-                if current_rating:
-                    dr.action = "dry_run_clear"
-                    log.info("[DRY RUN] Would clear rating from %s", audio.name)
-                else:
-                    dr.action = "skipped"
-            else:
-                current_rating = (
-                    server_item.get("OfficialRating", "") if server_item else ""
-                )
-                if current_rating:
-                    dr.action = _apply_rating(client, dr.server_item_id, "", audio.name)
-                    if dr.action == "set":
-                        dr.action = "cleared"
-                else:
-                    dr.action = "skipped"
+            dr.action = _decide_clear_action(
+                client=client,
+                item_id=dr.server_item_id,
+                current_rating=dr.previous_rating,
+                label=str(audio),
+                dry_run=config.dry_run,
+            )
         else:
             dr.action = "skipped"
 
         results.append(dr)
 
+    # Compute once — shared by embedded and genre passes
+    lib_root = Path(_normalize_path(str(config.library_path)))
+
     # --- Embedded lyrics pass ---
     if config.embedded_lyrics and client is not None:
-        lib_root = Path(_normalize_path(str(config.library_path)))
         if config.server_type == "jellyfin":
             candidate_count = sum(
                 1
@@ -1111,42 +1084,35 @@ def process_library(config: Config) -> list[DetectionResult]:
             if not text:
                 continue
             tier, matched = classify_lyrics(text, config)
-            item_id = item.get("Id", "")
+            item_id, prev_rating, artist, album = _item_fields(item)
             dr = DetectionResult(
                 sidecar_path=None,
                 audio_path=Path(norm_path),
                 tier=tier,
                 matched_words=matched,
                 server_item_id=item_id or None,
-                previous_rating=item.get("OfficialRating", "") or "",
-                artist=item.get("AlbumArtist", "") or "",
-                album=item.get("Album", "") or "",
+                previous_rating=prev_rating,
+                artist=artist,
+                album=album,
                 source="embedded",
             )
-            if not item_id:
-                log.warning(
-                    "Embedded-lyrics pass: server item at %s has no 'Id' field; cannot update",
-                    norm_path,
+            if tier is not None:
+                dr.action = _decide_rating_action(
+                    client=client,
+                    item_id=item_id or None,
+                    tier=tier,
+                    current_rating=prev_rating,
+                    label=norm_path,
+                    dry_run=config.dry_run,
                 )
-                dr.action = "not_found_in_server"
-            elif tier is not None:
-                if config.dry_run:
-                    dr.action = "dry_run"
-                elif (item.get("OfficialRating") or "") == tier:
-                    dr.action = "already_correct"
-                else:
-                    dr.action = _apply_rating(client, item_id, tier, norm_path)
             elif config.clear:
-                current = item.get("OfficialRating") or ""
-                if current:
-                    if config.dry_run:
-                        dr.action = "dry_run_clear"
-                    else:
-                        dr.action = _apply_rating(client, item_id, "", norm_path)
-                        if dr.action == "set":
-                            dr.action = "cleared"
-                else:
-                    dr.action = "skipped"
+                dr.action = _decide_clear_action(
+                    client=client,
+                    item_id=item_id or None,
+                    current_rating=prev_rating,
+                    label=norm_path,
+                    dry_run=config.dry_run,
+                )
             else:
                 dr.action = "skipped"
             handled_paths.add(norm_path)
@@ -1154,7 +1120,6 @@ def process_library(config: Config) -> list[DetectionResult]:
 
     # --- Genre-based G rating pass ---
     if config.g_genres and client is not None:
-        lib_root = Path(_normalize_path(str(config.library_path)))
         for norm_path, item in server_items.items():
             if norm_path in handled_paths:
                 continue
@@ -1163,8 +1128,7 @@ def process_library(config: Config) -> list[DetectionResult]:
             matched_genre = match_g_genre(item, config.g_genres)
             if matched_genre is None:
                 continue
-            current_rating = item.get("OfficialRating", "") or ""
-            item_id = item.get("Id", "")
+            item_id, prev_rating, artist, album = _item_fields(item)
             if not item_id:
                 log.warning(
                     "Genre-pass: server item at %s has no 'Id' field; skipping",
@@ -1177,22 +1141,24 @@ def process_library(config: Config) -> list[DetectionResult]:
                 tier="G",
                 matched_words=[matched_genre],
                 server_item_id=item_id,
-                previous_rating=current_rating,
-                artist=item.get("AlbumArtist", "") or "",
-                album=item.get("Album", "") or "",
+                previous_rating=prev_rating,
+                artist=artist,
+                album=album,
                 source="genre",
             )
-            if current_rating == "G":
-                dr.action = "g_genre_already_correct"
-            elif config.dry_run:
-                dr.action = "dry_run_g_genre"
-                log.info(
-                    "[DRY RUN] Would set G on %s (genre: %s)", norm_path, matched_genre
-                )
-            else:
-                dr.action = _apply_rating(client, item_id, "G", norm_path)
-                if dr.action == "set":
-                    dr.action = "g_genre"
+            action = _decide_rating_action(
+                client=client,
+                item_id=item_id,
+                tier="G",
+                current_rating=prev_rating,
+                label=norm_path,
+                dry_run=config.dry_run,
+                action_dry="dry_run_g_genre",
+                action_already="g_genre_already_correct",
+            )
+            if action == "set":
+                action = "g_genre"
+            dr.action = action
             results.append(dr)
 
     for r in results:
@@ -1242,16 +1208,15 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
 
     results: list[DetectionResult] = []
     for norm_path, item in items_in_scope.items():
-        item_id = item.get("Id", "")
-        current = item.get("OfficialRating", "") or ""
+        item_id, current, artist, album = _item_fields(item)
         dr = DetectionResult(
             sidecar_path=None,
             audio_path=Path(norm_path),
             tier=target,
             server_item_id=item_id,
             previous_rating=current,
-            artist=item.get("AlbumArtist", "") or "",
-            album=item.get("Album", "") or "",
+            artist=artist,
+            album=album,
             source="force",
         )
         if not item_id:
@@ -1329,6 +1294,61 @@ def _apply_rating(
     except MediaServerError as exc:
         log.error("Failed to update %s: %s", label, exc)
         return "error"
+
+
+def _decide_rating_action(
+    *,
+    client: MediaServerClient | None,
+    item_id: str | None,
+    tier: str,
+    current_rating: str,
+    label: str,
+    dry_run: bool,
+    action_dry: str = "dry_run",
+    action_already: str = "already_correct",
+) -> str:
+    """Common rating-decision logic for sidecar, embedded, and genre passes."""
+    if client is None:
+        return "server_unavailable"
+    if not item_id:
+        if item_id == "":
+            log.error("Server item for %s has empty 'Id'; cannot update", label)
+        else:
+            log.warning("Audio file not found in server: %s", label)
+        return "not_found_in_server"
+    if current_rating == tier:
+        log.debug("Already rated %s: %s", tier, label)
+        return action_already
+    if dry_run:
+        log.info("[DRY RUN] Would set %s on %s", tier, label)
+        return action_dry
+    return _apply_rating(client, item_id, tier, label)
+
+
+def _decide_clear_action(
+    *,
+    client: MediaServerClient | None,
+    item_id: str | None,
+    current_rating: str,
+    label: str,
+    dry_run: bool,
+) -> str:
+    """Common clear-decision logic for sidecar and embedded passes."""
+    if client is None:
+        return "server_unavailable"
+    if not item_id:
+        if item_id == "":
+            log.error("Server item for %s has empty 'Id'; cannot update", label)
+        else:
+            log.warning("Audio file not found in server: %s", label)
+        return "not_found_in_server"
+    if not current_rating:
+        return "skipped"
+    if dry_run:
+        log.info("[DRY RUN] Would clear rating from %s", label)
+        return "dry_run_clear"
+    action = _apply_rating(client, item_id, "", label)
+    return "cleared" if action == "set" else action
 
 
 # ---------------------------------------------------------------------------
