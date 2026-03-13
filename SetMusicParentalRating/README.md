@@ -85,6 +85,11 @@ Options:
                             with no sidecar file (default: off)
   --no-embedded-lyrics      Explicitly disable embedded-lyrics scanning, overriding
                             detection.embedded_lyrics = true in the TOML config
+  --lyrics-priority {sidecar,embedded,most_explicit}
+                            Which source wins when a track has both a sidecar (.lrc/.txt)
+                            and embedded lyrics. Only applies when --embedded-lyrics is on.
+                            Default: sidecar. most_explicit picks whichever detected the
+                            higher tier.
 ```
 
 ### Configuration
@@ -118,6 +123,18 @@ embedded_lyrics = false   # set to true to scan embedded tag lyrics for tracks w
 ```
 
 Enabling `embedded_lyrics` adds `MediaSources` to the server prefetch, which increases payload size on large libraries. Use `--no-embedded-lyrics` on the CLI to override a `true` value for a one-off run.
+
+### `--lyrics-priority {sidecar,embedded,most_explicit}`
+
+Controls which lyrics source determines the rating when a track has **both** a sidecar file (`.lrc`/`.txt`) and embedded lyrics (requires `--embedded-lyrics`).
+
+| Value | Behaviour |
+|---|---|
+| `sidecar` *(default)* | Sidecar always wins — use this if you curated your sidecar files deliberately |
+| `embedded` | Embedded tag always wins |
+| `most_explicit` | Whichever source detected the higher tier wins (R > PG-13 > clean) — recommended for maximum protection |
+
+When the two sources disagree, the `source_conflict` column in the CSV report shows which source lost and what it detected, e.g. `sidecar:PG-13->EMBEDDED:R`.
 
 **`[detection.g_genres]`** — optional genre-based G rating. Any audio item whose `Genres` field contains a listed entry (matched **case-insensitively**) and has no matching sidecar file will receive a `G` rating. Omitting the section or leaving `genres = []` disables the feature entirely.
 
