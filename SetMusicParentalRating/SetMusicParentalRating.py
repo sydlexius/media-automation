@@ -815,6 +815,7 @@ def write_report(
                     "previous_rating",
                     "action",
                     "source",
+                    "source_conflict",
                 ]
             )
             for r in results:
@@ -833,6 +834,7 @@ def write_report(
                         r.previous_rating,
                         r.action,
                         r.source,
+                        r.source_conflict,
                     ]
                 )
     except OSError as exc:
