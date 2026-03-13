@@ -19,6 +19,10 @@ __pycache__/
 
 # Claude Code
 .claude/
+.serena/
+
+# AI-generated process docs (specs, plans)
+docs/superpowers/
 
 # Git worktrees
 .worktrees/

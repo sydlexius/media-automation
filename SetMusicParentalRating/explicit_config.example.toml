@@ -26,9 +26,19 @@ url = "http://localhost:8097"
 # API key goes in .env file as JELLYFIN_API_KEY — do not put secrets in this file.
 
 [detection]
-# Set to true to also scan embedded lyrics tags (MediaSources) for tracks with no sidecar.
-# Off by default — enabling this increases the prefetch payload size.
+# Set to true to also scan embedded lyrics tags for tracks with no sidecar file.
+# On Emby this adds MediaSources to the bulk prefetch (larger payload); on Jellyfin it adds
+# one per-track lyrics request for sidecar-matched tracks (priority/conflict resolution) plus
+# one per-track request for tracks with no sidecar.
+# If you enable this, consider also uncommenting lyrics_priority below.
 embedded_lyrics = false
+
+# Controls which source wins when a track has both a sidecar (.lrc/.txt) and embedded lyrics.
+# Only applies when embedded_lyrics = true. Defaults to "sidecar" if unset.
+#   most_explicit: whichever source detected the higher tier wins (R > PG-13 > clean)
+#   sidecar:       sidecar always wins
+#   embedded:      embedded tag wins (ties — equal tiers — still defer to sidecar)
+# lyrics_priority = "most_explicit"
 
 [detection.r]
 stems = ["fuck", "shit", "pussy", "cock", "cum", "faggot"]

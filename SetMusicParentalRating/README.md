@@ -81,10 +81,18 @@ Options:
   --list-genres             Print all Audio genre tags from the server, then exit
                             (useful for building [detection.g_genres] in the config;
                             library_path is not required)
-  --embedded-lyrics         Also scan embedded lyrics tags (MediaSources) for tracks
-                            with no sidecar file (default: off)
+  --embedded-lyrics         Scan embedded lyrics tags for explicit content. On Emby,
+                            adds MediaSources to the bulk prefetch. On Jellyfin, adds
+                            one GET /Audio/{id}/Lyrics per track in scope (including
+                            sidecar-matched tracks, for --lyrics-priority resolution).
+                            (default: off)
   --no-embedded-lyrics      Explicitly disable embedded-lyrics scanning, overriding
                             detection.embedded_lyrics = true in the TOML config
+  --lyrics-priority {sidecar,embedded,most_explicit}
+                            Which source wins when a track has both a sidecar (.lrc/.txt)
+                            and embedded lyrics. Only applies when --embedded-lyrics is on.
+                            Default: sidecar. most_explicit picks whichever detected the
+                            higher tier.
 ```
 
 ### Configuration
@@ -117,7 +125,21 @@ SERVER_TYPE=emby   # or override per-run with --server-type
 embedded_lyrics = false   # set to true to scan embedded tag lyrics for tracks with no sidecar
 ```
 
-Enabling `embedded_lyrics` adds `MediaSources` to the server prefetch, which increases payload size on large libraries. Use `--no-embedded-lyrics` on the CLI to override a `true` value for a one-off run.
+On Emby, enabling `embedded_lyrics` adds `MediaSources` to the bulk prefetch, increasing payload size on large libraries. On Jellyfin, it adds per-track `GET /Audio/{itemId}/Lyrics` calls instead (see Jellyfin note below).
+
+> **Jellyfin note:** When `--server-type jellyfin` is used, `GET /Audio/{itemId}/Lyrics` is called for every track in scope — including sidecar-matched tracks (to resolve priority / record conflicts in `source_conflict`) and tracks with no sidecar. No plugin required. On large libraries with many sidecars this adds a substantial number of sequential requests; an info log line shows the embedded-pass count before that loop starts.
+
+### `--lyrics-priority {sidecar,embedded,most_explicit}`
+
+Controls which lyrics source determines the rating when a track has **both** a sidecar file (`.lrc`/`.txt`) and embedded lyrics (requires `--embedded-lyrics`).
+
+| Value | Behaviour |
+|---|---|
+| `sidecar` *(default)* | Sidecar always wins — use this if you curated your sidecar files deliberately |
+| `embedded` | Embedded tag wins when sources disagree — ties (equal tiers) still defer to sidecar |
+| `most_explicit` | Whichever source detected the higher tier wins (R > PG-13 > clean) — recommended for maximum protection |
+
+When the two sources disagree, the `source_conflict` column in the CSV report shows which source lost and what it detected, e.g. `sidecar:PG-13->EMBEDDED:R`.
 
 **`[detection.g_genres]`** — optional genre-based G rating. Any audio item whose `Genres` field contains a listed entry (matched **case-insensitively**) and has no matching sidecar file will receive a `G` rating. Omitting the section or leaving `genres = []` disables the feature entirely.
 
@@ -151,5 +173,6 @@ The `--report` flag produces a CSV with columns useful for admin review:
 | `previous_rating` | What `OfficialRating` was before this run |
 | `action` | `set` · `cleared` · `already_correct` · `skipped` · `not_found_in_server` · `server_unavailable` · `no_audio_file` · `error` · `dry_run` · `dry_run_clear` · `g_genre` · `g_genre_already_correct` · `dry_run_g_genre` |
 | `source` | `sidecar` · `embedded` · `genre` · `force` — identifies which detection pass produced the row |
+| `source_conflict` | Non-empty when sidecar and embedded lyrics disagree; format: `{loser}:{tier}->{WINNER}:{tier}` (e.g. `sidecar:PG-13->EMBEDDED:R`). Loser is lowercase, winner is uppercase; tier is `R`, `PG-13`, or `clean`. Empty when sources agree or only one source was in scope. |
 
 This lets an admin spot false positives caused by lyric transcription errors (e.g., "cuming" instead of "coming") and take corrective action on the sidecar files.

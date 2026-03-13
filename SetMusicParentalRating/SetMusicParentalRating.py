@@ -102,6 +102,10 @@ log = logging.getLogger(__name__)
 class MediaServerError(Exception):
     """Raised when a media server API call fails."""
 
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 # ---------------------------------------------------------------------------
 # Dataclasses
@@ -127,11 +131,17 @@ class Config:
     report_path: Path | None = None
     g_genres: list[str] = field(default_factory=list)
     embedded_lyrics: bool = False
+    lyrics_priority: str = "sidecar"  # "sidecar" | "embedded" | "most_explicit"
 
     def __post_init__(self) -> None:
         if self.server_type not in ("emby", "jellyfin"):
             raise ValueError(
                 f"server_type must be 'emby' or 'jellyfin', got {self.server_type!r}"
+            )
+        if self.lyrics_priority not in ("sidecar", "embedded", "most_explicit"):
+            raise ValueError(
+                f"lyrics_priority must be 'sidecar', 'embedded', or 'most_explicit', "
+                f"got {self.lyrics_priority!r}"
             )
         self._r_exact_patterns = _compile_exact_patterns(self.r_exact)
         self._pg13_exact_patterns = _compile_exact_patterns(self.pg13_exact)
@@ -154,6 +164,10 @@ class DetectionResult:
     artist: str = ""
     album: str = ""
     source: str = ""  # "sidecar" | "embedded" | "genre" | "force"
+    source_conflict: str = (
+        ""  # format: "{loser}:{tier}->{WINNER}:{tier}"; loser lowercase, WINNER uppercase;
+        #  tier is "R"|"PG-13"|"clean" (clean = no explicit content); empty when sources agree
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +358,7 @@ def build_config(args: argparse.Namespace) -> Config:
     )
     g_genres = det.get("g_genres", {}).get("genres", [])
     embedded_lyrics = det.get("embedded_lyrics", False)
+    lyrics_priority_toml = det.get("lyrics_priority", "sidecar")
 
     # --- report ---
     report_path_str = args.report or toml.get("report", {}).get("output_path")
@@ -367,6 +382,9 @@ def build_config(args: argparse.Namespace) -> Config:
         embedded_lyrics=embedded_lyrics
         if args.embedded_lyrics is None
         else args.embedded_lyrics,
+        lyrics_priority=lyrics_priority_toml
+        if args.lyrics_priority is None
+        else args.lyrics_priority,
     )
 
 
@@ -538,6 +556,52 @@ def match_g_genre(item: dict, g_genres: list[str]) -> str | None:
     return None
 
 
+_TIER_RANK: dict[str | None, int] = {None: 0, "PG-13": 1, "R": 2}
+
+
+def _resolve_priority(
+    sidecar_tier: str | None,
+    sidecar_matched: list[str],
+    embedded_tier: str | None,
+    embedded_matched: list[str],
+    priority: str,
+) -> tuple[str | None, list[str], str, str]:
+    """Return (winning_tier, winning_matched, winning_source, source_conflict).
+
+    winning_source is lowercase ("sidecar" or "embedded") for storage in
+    DetectionResult.source. source_conflict uses uppercase for the winning
+    source name and lowercase for the losing source name (e.g.
+    "embedded:PG-13->SIDECAR:R"); empty string when both sources agree.
+    None tier is serialized as "clean" in source_conflict.
+    Equal tiers always defer to sidecar regardless of priority mode.
+    """
+
+    def _label(tier: str | None) -> str:
+        return tier if tier is not None else "clean"
+
+    if sidecar_tier == embedded_tier:
+        # Both agree — no conflict, sidecar wins by convention
+        return sidecar_tier, sidecar_matched, "sidecar", ""
+
+    # Sources disagree — compute conflict string regardless of policy
+    if priority == "sidecar":
+        winner, w_matched, w_src = sidecar_tier, sidecar_matched, "sidecar"
+        loser_src, loser_tier = "embedded", embedded_tier
+    elif priority == "embedded":
+        winner, w_matched, w_src = embedded_tier, embedded_matched, "embedded"
+        loser_src, loser_tier = "sidecar", sidecar_tier
+    else:  # most_explicit
+        if _TIER_RANK[embedded_tier] > _TIER_RANK[sidecar_tier]:
+            winner, w_matched, w_src = embedded_tier, embedded_matched, "embedded"
+            loser_src, loser_tier = "sidecar", sidecar_tier
+        else:
+            winner, w_matched, w_src = sidecar_tier, sidecar_matched, "sidecar"
+            loser_src, loser_tier = "embedded", embedded_tier
+
+    conflict = f"{loser_src}:{_label(loser_tier)}->{w_src.upper()}:{_label(winner)}"
+    return winner, w_matched, w_src, conflict
+
+
 # ---------------------------------------------------------------------------
 # Emby API Client
 # ---------------------------------------------------------------------------
@@ -586,7 +650,8 @@ class MediaServerClient:
             except Exception as inner_exc:
                 log.debug("Could not read HTTP error body: %s", inner_exc)
             raise MediaServerError(
-                f"HTTP {exc.code} on {method} {path}: {body_snippet}"
+                f"HTTP {exc.code} on {method} {path}: {body_snippet}",
+                status_code=exc.code,
             ) from exc
         except urllib.error.URLError as exc:
             raise MediaServerError(
@@ -598,11 +663,13 @@ class MediaServerClient:
     ) -> dict[str, dict]:
         """Paginated fetch of all Audio items. Returns {normalized_path: item}.
 
-        Pass include_media_sources=True to include MediaSources (and embedded
-        lyrics in MediaStreams.Extradata) at the cost of a larger payload.
+        Pass include_media_sources=True to append MediaSources to the Fields
+        parameter on Emby (includes embedded lyrics in MediaStreams.Extradata at
+        the cost of a larger payload). On Jellyfin this flag has no effect —
+        embedded lyrics are fetched per-track via /Audio/{id}/Lyrics by the caller.
         """
         fields = "Path,OfficialRating,AlbumArtist,Album,Genres"
-        if include_media_sources:
+        if include_media_sources and self.server_type == "emby":
             fields += ",MediaSources"
         items_by_path: dict[str, dict] = {}
         start_index = 0
@@ -662,6 +729,42 @@ class MediaServerClient:
                 f"Empty response for GET /Users/{uid}/Items/{item_id}"
             )
         return result
+
+    def fetch_lyrics_jellyfin(self, item_id: str) -> str:
+        """Fetch embedded lyrics for a Jellyfin track via GET /Audio/{item_id}/Lyrics.
+
+        Returns plain lyric text (LRC timestamps stripped), or "" if the item
+        has no lyrics or the request fails. Requires no lyrics plugin.
+        """
+        try:
+            data = self._request("GET", f"/Audio/{item_id}/Lyrics")
+        except MediaServerError as exc:
+            if exc.status_code == 404:
+                return ""
+            log.warning("Jellyfin lyrics fetch failed for item %s: %s", item_id, exc)
+            return ""
+        if not data:
+            return ""
+        if not isinstance(data, dict):
+            log.warning(
+                "Jellyfin lyrics endpoint returned unexpected type %s for item %s",
+                type(data).__name__,
+                item_id,
+            )
+            return ""
+        raw_lyrics = data.get("Lyrics") or []
+        if not isinstance(raw_lyrics, list):
+            log.warning(
+                "Jellyfin lyrics payload has unexpected Lyrics type for item %s",
+                item_id,
+            )
+            return ""
+        lines = [
+            entry.get("Text", "")
+            for entry in raw_lyrics
+            if isinstance(entry, dict) and entry.get("Text")
+        ]
+        return strip_lrc_tags("\n".join(lines))
 
     def update_item(self, item_id: str, item_body: dict) -> None:
         """POST /Items/{id} — send full item body with modified fields."""
@@ -757,6 +860,7 @@ def write_report(
                     "previous_rating",
                     "action",
                     "source",
+                    "source_conflict",
                 ]
             )
             for r in results:
@@ -775,6 +879,7 @@ def write_report(
                         r.previous_rating,
                         r.action,
                         r.source,
+                        r.source_conflict,
                     ]
                 )
     except OSError as exc:
@@ -855,6 +960,31 @@ def process_library(config: Config) -> list[DetectionResult]:
             dr.artist = server_item.get("AlbumArtist", "") or ""
             dr.album = server_item.get("Album", "") or ""
 
+        # Augment sidecar classification with embedded lyrics if present
+        if config.embedded_lyrics and server_item and client is not None:
+            try:
+                if config.server_type == "jellyfin":
+                    _sid = server_item.get("Id", "")
+                    embedded_text = client.fetch_lyrics_jellyfin(_sid) if _sid else ""
+                else:
+                    embedded_text = extract_embedded_lyrics(server_item)
+                if embedded_text:
+                    emb_tier, emb_matched = classify_lyrics(embedded_text, config)
+                    tier, matched, winning_source, dr.source_conflict = (
+                        _resolve_priority(
+                            tier, matched, emb_tier, emb_matched, config.lyrics_priority
+                        )
+                    )
+                    dr.source = winning_source
+                    dr.tier = tier
+                    dr.matched_words = matched
+            except Exception as exc:
+                log.warning(
+                    "Failed to augment sidecar result with embedded lyrics for %s: %s",
+                    audio,
+                    exc,
+                )
+
         # Decide action
         if tier is not None:
             # Explicit content found — set rating
@@ -921,12 +1051,28 @@ def process_library(config: Config) -> list[DetectionResult]:
     # --- Embedded lyrics pass ---
     if config.embedded_lyrics and client is not None:
         lib_root = Path(_normalize_path(str(config.library_path)))
+        if config.server_type == "jellyfin":
+            candidate_count = sum(
+                1
+                for p in server_items
+                if p not in handled_paths and Path(p).is_relative_to(lib_root)
+            )
+            if candidate_count:
+                log.info(
+                    "Embedded lyrics pass: querying Jellyfin for %d tracks individually"
+                    " (one request per track)...",
+                    candidate_count,
+                )
         for norm_path, item in server_items.items():
             if norm_path in handled_paths:
                 continue
             if not Path(norm_path).is_relative_to(lib_root):
                 continue
-            text = extract_embedded_lyrics(item)
+            if config.server_type == "jellyfin":
+                _iid = item.get("Id", "")
+                text = client.fetch_lyrics_jellyfin(_iid) if _iid else ""
+            else:
+                text = extract_embedded_lyrics(item)
             if not text:
                 continue
             tier, matched = classify_lyrics(text, config)
@@ -1220,7 +1366,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--embedded-lyrics",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Fall back to embedded tag lyrics when no sidecar file exists (default: off)",
+        help=(
+            "Scan embedded tag lyrics for explicit content. "
+            "On Emby, adds MediaSources to the bulk prefetch. "
+            "On Jellyfin, adds one GET /Audio/{id}/Lyrics request per track in scope — "
+            "including sidecar-matched tracks (for --lyrics-priority resolution). "
+            "(default: off)"
+        ),
+    )
+    parser.add_argument(
+        "--lyrics-priority",
+        default=None,
+        choices=("sidecar", "embedded", "most_explicit"),
+        help=(
+            "Which source wins when a track has both a sidecar (.lrc/.txt) and embedded lyrics. "
+            "Only applies when --embedded-lyrics is on. "
+            "Default: sidecar. most_explicit picks whichever detected the higher tier. "
+            "Ties (both sources at the same tier) always defer to sidecar regardless of priority."
+        ),
     )
     return parser
 
@@ -1246,9 +1409,28 @@ def print_summary(results: list[DetectionResult]) -> None:
         if r.action in ("g_genre", "g_genre_already_correct", "dry_run_g_genre")
     ]
     sidecar_count = sum(
-        1 for r in scan_results if r.source == "sidecar" or r.action == "no_audio_file"
+        1
+        for r in scan_results
+        if r.sidecar_path is not None or r.action == "no_audio_file"
     )
-    embedded_count = sum(1 for r in scan_results if r.source == "embedded")
+    embedded_only_count = sum(
+        1 for r in scan_results if r.sidecar_path is None and r.source == "embedded"
+    )
+    sidecar_won_count = sum(
+        1
+        for r in scan_results
+        if r.sidecar_path is not None
+        and r.source_conflict != ""
+        and r.source == "sidecar"
+    )
+    embedded_won_count = sum(
+        1
+        for r in scan_results
+        if r.sidecar_path is not None
+        and r.source_conflict != ""
+        and r.source == "embedded"
+    )
+    conflict_count = sum(1 for r in scan_results if r.source_conflict != "")
     total = len(scan_results)
     r_count = sum(1 for r in scan_results if r.tier == "R")
     pg13_count = sum(1 for r in scan_results if r.tier == "PG-13")
@@ -1256,15 +1438,17 @@ def print_summary(results: list[DetectionResult]) -> None:
     audio_found = sum(
         1
         for r in scan_results
-        if r.source == "sidecar"
+        if r.sidecar_path is not None
         and r.audio_path is not None
         and r.action != "no_audio_file"
     )
     sidecar_server_matched = sum(
-        1 for r in scan_results if r.source == "sidecar" and r.server_item_id
+        1 for r in scan_results if r.sidecar_path is not None and r.server_item_id
     )
     embedded_server_matched = sum(
-        1 for r in scan_results if r.source == "embedded" and r.server_item_id
+        1
+        for r in scan_results
+        if r.sidecar_path is None and r.source == "embedded" and r.server_item_id
     )
     rated = sum(1 for r in results if r.action == "set")
     already = sum(1 for r in results if r.action == "already_correct")
@@ -1283,17 +1467,25 @@ def print_summary(results: list[DetectionResult]) -> None:
     if total:
         if sidecar_count:
             print(f"  Sidecars scanned:    {sidecar_count}")
-        if embedded_count:
-            print(f"  From embedded tags:  {embedded_count}")
+        if sidecar_count and conflict_count:
+            print(f"    Used sidecar lyrics:  {sidecar_won_count}")
+            print(f"    Used embedded lyrics: {embedded_won_count}")
+        if embedded_only_count:
+            print(f"  From embedded tags only: {embedded_only_count}")
         print(f"    R-rated:           {r_count}")
         print(f"    PG-13:             {pg13_count}")
         print(f"    Clean:             {clean}")
         if sidecar_count:
             print(f"  Audio files found:   {audio_found} / {sidecar_count}")
             print(f"  Server items matched: {sidecar_server_matched} / {audio_found}")
-        if embedded_count:
+        if embedded_only_count:
             print(
-                f"  Embedded matched:     {embedded_server_matched} / {embedded_count}"
+                f"  Embedded matched:     {embedded_server_matched} / {embedded_only_count}"
+            )
+        if conflict_count:
+            print(
+                f"  Source conflicts:    {conflict_count}"
+                f"  ← check source_conflict column in report"
             )
     print(f"  Ratings set:         {rated}")
     print(f"  Already correct:     {already}")

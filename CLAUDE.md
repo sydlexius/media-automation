@@ -55,8 +55,9 @@ ruff format --check . # CI uses this
 ### Tests
 ```bash
 cd SetMusicParentalRating
-python3 -m pytest tests/ -v --tb=short    # run all tests (if tests/ exists)
-python3 -c "import SetMusicParentalRating"  # verify imports (CI smoke test)
+python3 -m pytest tests/ -v --tb=short              # run all tests (if tests/ exists)
+python3 -m pytest tests/test_foo.py::test_name -v   # run a single test
+python3 -c "import SetMusicParentalRating"           # verify imports (CI smoke test)
 ```
 
 ### Pre-commit
@@ -69,12 +70,15 @@ pre-commit run --all-files
 `SetMusicParentalRating.py` is a single-file script with no external dependencies — pure stdlib Python 3.11+.
 
 ### Key data flow
-1. **Config merge** (`build_config`): CLI flags > `os.environ` > `.env` file > `explicit_config.toml` > hardcoded defaults
+1. **Config merge** (`build_config`): CLI flags > `os.environ` > `.env` file > `explicit_config.toml` > hardcoded defaults. Server-type resolution is two-phase: explicit `SERVER_TYPE` override wins; otherwise auto-detected from which `EMBY_URL`/`JELLYFIN_URL` vars are present (errors if both are set). `Config.__post_init__` precompiles exact-match regexes — any new config field that needs preprocessing belongs there.
 2. **Filesystem scan** (`scan_library`): finds sidecar files, matches each to an audio file by filename stem
-3. **LRC parsing** (`strip_lrc_tags`, `parse_sidecar`): strips timestamps/metadata to get plain text
+3. **LRC parsing** (`strip_lrc_tags`, `parse_sidecar`): strips timestamps/metadata to get plain text. `extract_embedded_lyrics` does the same for `MediaSources.MediaStreams[].Extradata` from server items.
 4. **Detection** (`classify_lyrics`): two-tier word detection — stem matching (substring with false-positive filter) and exact matching (word-boundary regex). R tier takes priority over PG-13.
-5. **Server sync** (`process_library`): bulk prefetches all Audio items by path, then GET-then-POST round-trip per item to update `OfficialRating`
-6. **Genre pass** (`process_library`, after sidecar loop): items matching `[detection.g_genres]` and without a sidecar receive a `G` rating
+5. **Server sync** (`process_library`): bulk prefetches all Audio items by path into `server_items: dict[str, dict]`, then runs three sequential passes, each skipping paths already in `handled_paths`:
+   - **Sidecar pass**: processes all `(sidecar, audio)` pairs from `scan_library`; adds each audio path to `handled_paths`. When `config.embedded_lyrics` is on, each sidecar-pass item also checks the server item for embedded lyrics and calls `_resolve_priority` to pick the winning source — see `lyrics_priority` below.
+   - **Embedded pass** (only when `config.embedded_lyrics`): for Emby, reads `Extradata` from prefetched `MediaSources`; for Jellyfin, calls `GET /Audio/{itemId}/Lyrics` per track. Adds matched paths to `handled_paths`
+   - **Genre pass** (only when `config.g_genres`): assigns `G` to items not yet in `handled_paths` whose `Genres` list overlaps the allow-list
+6. Each track produces one `DetectionResult`. `source` identifies which lyrics source determined the final rating: `"sidecar"` | `"embedded"` | `"genre"` | `"force"`. `source_conflict` is non-empty when both sidecar and embedded lyrics existed and disagreed (format: `"{loser}:{tier}->{WINNER}:{tier}"`). `action` records what happened: `set | cleared | skipped | already_correct | not_found_in_server | server_unavailable | error | no_audio_file | dry_run | dry_run_clear | g_genre | g_genre_already_correct | dry_run_g_genre`.
 
 ### API pattern (Emby and Jellyfin)
 - Auth: `X-Emby-Token` header (Emby) or `X-MediaBrowser-Token` header (Jellyfin)
@@ -89,6 +93,7 @@ pre-commit run --all-files
 - Use `--server-type jellyfin` (or `SERVER_TYPE=jellyfin` in `.env`) to target Jellyfin
 - Word lists, library path, and genre allow-list go in `explicit_config.toml` (copy from `explicit_config.example.toml`)
 - Only `explicit_config.example.toml` is committed; all other TOML variants are gitignored
+- `lyrics_priority` (`"sidecar"` | `"embedded"` | `"most_explicit"`, default `"sidecar"`): when `embedded_lyrics` is on and a track has both a sidecar and embedded lyrics, controls which source wins. `most_explicit` picks whichever detected the higher tier. Applies to both Emby and Jellyfin.
 
 ## CI
 
