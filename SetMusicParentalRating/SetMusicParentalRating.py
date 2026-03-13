@@ -17,7 +17,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 try:
@@ -132,11 +132,17 @@ class Config:
     g_genres: list[str] = field(default_factory=list)
     embedded_lyrics: bool = False
     lyrics_priority: str = "sidecar"  # "sidecar" | "embedded" | "most_explicit"
+    # Per-server credentials — always populated when the env vars exist; used by
+    # main() to build derived configs in --server-type both mode.
+    emby_url: str = ""
+    emby_api_key: str = ""
+    jellyfin_url: str = ""
+    jellyfin_api_key: str = ""
 
     def __post_init__(self) -> None:
-        if self.server_type not in ("emby", "jellyfin"):
+        if self.server_type not in ("emby", "jellyfin", "both"):
             raise ValueError(
-                f"server_type must be 'emby' or 'jellyfin', got {self.server_type!r}"
+                f"server_type must be 'emby', 'jellyfin', or 'both', got {self.server_type!r}"
             )
         if self.lyrics_priority not in ("sidecar", "embedded", "most_explicit"):
             raise ValueError(
@@ -167,6 +173,9 @@ class DetectionResult:
     source_conflict: str = (
         ""  # format: "{loser}:{tier}->{WINNER}:{tier}"; loser lowercase, WINNER uppercase;
         #  tier is "R"|"PG-13"|"clean" (clean = no explicit content); empty when sources agree
+    )
+    server_type: str = (
+        ""  # "emby" | "jellyfin"; populated by process_library / force_rate_library
     )
 
 
@@ -290,62 +299,68 @@ def build_config(args: argparse.Namespace) -> Config:
         .strip()
     )
 
+    # --- Resolve both credential pairs unconditionally ---
+    cli_server_url = getattr(args, "server_url", None) or ""
+    cli_api_key = getattr(args, "api_key", None) or ""
+
+    emby_url = (
+        os.environ.get("EMBY_URL", "")
+        or env_file.get("EMBY_URL", "")
+        or toml.get("emby", {}).get("url", "")
+    ).strip()
+    emby_api_key = (
+        os.environ.get("EMBY_API_KEY", "") or env_file.get("EMBY_API_KEY", "") or ""
+    ).strip()
+    jellyfin_url = (
+        os.environ.get("JELLYFIN_URL", "")
+        or env_file.get("JELLYFIN_URL", "")
+        or toml.get("jellyfin", {}).get("url", "")
+    ).strip()
+    jellyfin_api_key = (
+        os.environ.get("JELLYFIN_API_KEY", "")
+        or env_file.get("JELLYFIN_API_KEY", "")
+        or ""
+    ).strip()
+
+    has_emby = bool(emby_url)
+    has_jellyfin = bool(jellyfin_url)
+
     if explicit_type:
         server_type = explicit_type
+        if server_type == "both":
+            if not has_emby:
+                print(
+                    "Error: --server-type both requires EMBY_URL and EMBY_API_KEY",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if not has_jellyfin:
+                print(
+                    "Error: --server-type both requires JELLYFIN_URL and JELLYFIN_API_KEY",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
     else:
-        has_emby = bool(
-            (
-                os.environ.get("EMBY_URL", "")
-                or env_file.get("EMBY_URL", "")
-                or str(toml.get("emby", {}).get("url") or "")
-            ).strip()
-        )
-        has_jellyfin = bool(
-            (
-                os.environ.get("JELLYFIN_URL", "")
-                or env_file.get("JELLYFIN_URL", "")
-                or str(toml.get("jellyfin", {}).get("url") or "")
-            ).strip()
-        )
         if has_emby and has_jellyfin:
             print(
                 "Error: both Emby and Jellyfin are configured; "
-                "use --server-type emby or --server-type jellyfin to select one.",
+                "use --server-type emby, --server-type jellyfin, or --server-type both to select.",
                 file=sys.stderr,
             )
             sys.exit(1)
         server_type = "jellyfin" if has_jellyfin else "emby"
 
-    # --- server_url / server_api_key (resolved per server_type) ---
-    cli_server_url = getattr(args, "server_url", None) or ""
-    cli_api_key = getattr(args, "api_key", None) or ""
-
-    if server_type == "jellyfin":
-        server_url = (
-            cli_server_url
-            or os.environ.get("JELLYFIN_URL", "")
-            or env_file.get("JELLYFIN_URL", "")
-            or toml.get("jellyfin", {}).get("url", "")
-        )
-        server_api_key = (
-            cli_api_key
-            or os.environ.get("JELLYFIN_API_KEY", "")
-            or env_file.get("JELLYFIN_API_KEY", "")
-            or ""
-        )
+    # --- server_url / server_api_key for single-server mode ---
+    if server_type == "both":
+        # Unused in "both" mode — main() uses per-server fields from Config directly
+        server_url = ""
+        server_api_key = ""
+    elif server_type == "jellyfin":
+        server_url = cli_server_url or jellyfin_url
+        server_api_key = cli_api_key or jellyfin_api_key
     else:
-        server_url = (
-            cli_server_url
-            or os.environ.get("EMBY_URL", "")
-            or env_file.get("EMBY_URL", "")
-            or toml.get("emby", {}).get("url", "")
-        )
-        server_api_key = (
-            cli_api_key
-            or os.environ.get("EMBY_API_KEY", "")
-            or env_file.get("EMBY_API_KEY", "")
-            or ""
-        )
+        server_url = cli_server_url or emby_url
+        server_api_key = cli_api_key or emby_api_key
 
     # --- word lists (TOML or defaults) ---
     det = toml.get("detection", {})
@@ -385,6 +400,10 @@ def build_config(args: argparse.Namespace) -> Config:
         lyrics_priority=lyrics_priority_toml
         if args.lyrics_priority is None
         else args.lyrics_priority,
+        emby_url=emby_url.rstrip("/"),
+        emby_api_key=emby_api_key,
+        jellyfin_url=jellyfin_url.rstrip("/"),
+        jellyfin_api_key=jellyfin_api_key,
     )
 
 
@@ -861,6 +880,7 @@ def write_report(
                     "action",
                     "source",
                     "source_conflict",
+                    "server",
                 ]
             )
             for r in results:
@@ -880,6 +900,7 @@ def write_report(
                         r.action,
                         r.source,
                         r.source_conflict,
+                        r.server_type,
                     ]
                 )
     except OSError as exc:
@@ -1160,6 +1181,9 @@ def process_library(config: Config) -> list[DetectionResult]:
                     dr.action = "g_genre"
             results.append(dr)
 
+    for r in results:
+        if not r.server_type:
+            r.server_type = config.server_type
     return results
 
 
@@ -1231,11 +1255,21 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
             dr.action = _apply_rating(client, item_id, target, norm_path)
         results.append(dr)
 
+    for r in results:
+        if not r.server_type:
+            r.server_type = config.server_type
     return results
 
 
 def list_genres_mode(config: Config) -> None:
     """--list-genres mode: print all Audio genre names from the server to stdout. Exits with non-zero status on error."""
+    if config.server_type == "both":
+        print(
+            "Error: --list-genres is not supported with --server-type both. "
+            "Run separately with --server-type emby and --server-type jellyfin.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if not config.server_url or not config.server_api_key:
         print(
             "Error: --list-genres requires server URL and API key "
@@ -1313,8 +1347,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--server-type",
         default=None,
-        choices=("emby", "jellyfin"),
-        help="Media server type: 'emby' (default) or 'jellyfin'",
+        choices=("emby", "jellyfin", "both"),
+        help="Media server type: 'emby', 'jellyfin', or 'both' (syncs both in one pass)",
     )
     parser.add_argument(
         "--server-url",
@@ -1397,7 +1431,9 @@ def setup_logging(verbose: bool) -> None:
     )
 
 
-def print_summary(results: list[DetectionResult]) -> None:
+def print_summary(results: list[DetectionResult], label: str = "") -> None:
+    if label:
+        print(f"\n=== {label} ===")
     scan_results = [
         r
         for r in results
@@ -1519,15 +1555,38 @@ def main() -> None:
         list_genres_mode(config)
         return
 
-    if config.force_rating:
-        results = force_rate_library(config)
+    if config.server_type == "both":
+        emby_cfg = replace(
+            config,
+            server_type="emby",
+            server_url=config.emby_url,
+            server_api_key=config.emby_api_key,
+        )
+        jf_cfg = replace(
+            config,
+            server_type="jellyfin",
+            server_url=config.jellyfin_url,
+            server_api_key=config.jellyfin_api_key,
+        )
+        if config.force_rating:
+            emby_results = force_rate_library(emby_cfg)
+            jf_results = force_rate_library(jf_cfg)
+        else:
+            emby_results = process_library(emby_cfg)
+            jf_results = process_library(jf_cfg)
+        results = emby_results + jf_results
+        if config.report_path:
+            write_report(results, config.report_path, config.library_path)
+        print_summary(emby_results, label="Emby")
+        print_summary(jf_results, label="Jellyfin")
     else:
-        results = process_library(config)
-
-    if config.report_path:
-        write_report(results, config.report_path, config.library_path)
-
-    print_summary(results)
+        if config.force_rating:
+            results = force_rate_library(config)
+        else:
+            results = process_library(config)
+        if config.report_path:
+            write_report(results, config.report_path, config.library_path)
+        print_summary(results)
 
 
 if __name__ == "__main__":

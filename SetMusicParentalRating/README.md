@@ -43,6 +43,9 @@ python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --dry-ru
 # 3. Dry run against Jellyfin
 python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --server-type jellyfin --dry-run
 
+# 3b. Dry run against both Emby and Jellyfin simultaneously
+python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --server-type both --dry-run --report /tmp/both.csv
+
 # 4. Live run — set ratings
 python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --report report.csv
 
@@ -68,9 +71,13 @@ Positional:
 Options:
   --config PATH             TOML config file (default: explicit_config.toml in script dir)
   --env-file PATH           .env file to load (default: .env in repo root; e.g. --env-file .env.prod)
-  --server-type TYPE        'emby' or 'jellyfin' — auto-detected from configured server URLs
-                            (env vars or TOML) when only one server is active; can also be
-                            set via SERVER_TYPE env var or [general].server_type in TOML
+  --server-type TYPE        'emby', 'jellyfin', or 'both' — auto-detected from configured
+                            server URLs (env vars or TOML) when only one server is active;
+                            'both' runs process_library twice (once per server) using the
+                            same config, then merges results into a single CSV report with
+                            a 'server' column. Can also be set via SERVER_TYPE env var or
+                            [general].server_type in TOML. --list-genres is not supported
+                            with 'both' (run each server separately).
   --server-url URL          Server URL — overrides the env var for the active server type
   --api-key KEY             API key — overrides the env var for the active server type
   -n, --dry-run             Analyze only, no server updates
@@ -110,7 +117,7 @@ EMBY_URL=http://localhost:8096
 EMBY_API_KEY=your-emby-key-here
 JELLYFIN_URL=http://localhost:8097
 JELLYFIN_API_KEY=your-jellyfin-key-here
-SERVER_TYPE=emby   # or override per-run with --server-type
+SERVER_TYPE=both   # or 'emby' / 'jellyfin'; override per-run with --server-type
 
 # Use --env-file .env.prod to load a different env file
 # Exported env vars still take precedence over .env
@@ -174,5 +181,6 @@ The `--report` flag produces a CSV with columns useful for admin review:
 | `action` | `set` · `cleared` · `already_correct` · `skipped` · `not_found_in_server` · `server_unavailable` · `no_audio_file` · `error` · `dry_run` · `dry_run_clear` · `g_genre` · `g_genre_already_correct` · `dry_run_g_genre` |
 | `source` | `sidecar` · `embedded` · `genre` · `force` — identifies which detection pass produced the row |
 | `source_conflict` | Non-empty when sidecar and embedded lyrics disagree; format: `{loser}:{tier}->{WINNER}:{tier}` (e.g. `sidecar:PG-13->EMBEDDED:R`). Loser is lowercase, winner is uppercase; tier is `R`, `PG-13`, or `clean`. Empty when sources agree or only one source was in scope. |
+| `server` | `emby` or `jellyfin` — identifies which server this row was synced against. Most useful when running `--server-type both`. |
 
 This lets an admin spot false positives caused by lyric transcription errors (e.g., "cuming" instead of "coming") and take corrective action on the sidecar files.

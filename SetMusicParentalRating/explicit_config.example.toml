@@ -9,9 +9,10 @@
 #   To connect to Emby, set EMBY_API_KEY and EMBY_URL in your .env.
 #   To connect to Jellyfin, set JELLYFIN_API_KEY and JELLYFIN_URL in your .env
 #   and set SERVER_TYPE=jellyfin (or use --server-type jellyfin on the CLI).
+#   To sync both servers in one pass, set both credential pairs and use SERVER_TYPE=both.
 
 [general]
-server_type = "emby"   # "emby" (default) or "jellyfin"
+server_type = "emby"   # "emby" (default), "jellyfin", or "both" (syncs both in one pass)
 # A single library path. To scan multiple libraries, run the script once per
 # library or use a wrapper script. The library_path can also be passed as the
 # first positional CLI argument or via TAGLRC_LIBRARY_PATH env var.
