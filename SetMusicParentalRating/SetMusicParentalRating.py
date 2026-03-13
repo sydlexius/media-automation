@@ -1281,14 +1281,16 @@ def print_summary(results: list[DetectionResult]) -> None:
     print()
     print("=== Explicit Lyrics Scan Complete ===")
     if total:
-        print(f"  Sidecars scanned:    {sidecar_count}")
+        if sidecar_count:
+            print(f"  Sidecars scanned:    {sidecar_count}")
         if embedded_count:
             print(f"  From embedded tags:  {embedded_count}")
         print(f"    R-rated:           {r_count}")
         print(f"    PG-13:             {pg13_count}")
         print(f"    Clean:             {clean}")
-        print(f"  Audio files found:   {audio_found} / {sidecar_count}")
-        print(f"  Server items matched: {sidecar_server_matched} / {audio_found}")
+        if sidecar_count:
+            print(f"  Audio files found:   {audio_found} / {sidecar_count}")
+            print(f"  Server items matched: {sidecar_server_matched} / {audio_found}")
         if embedded_count:
             print(
                 f"  Embedded matched:     {embedded_server_matched} / {embedded_count}"

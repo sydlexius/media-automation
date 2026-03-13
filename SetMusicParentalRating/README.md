@@ -130,11 +130,11 @@ Run `--list-genres` to see all genre strings present in your library.
 
 ### Detection Details
 
-**Stem matching** checks if a configured stem appears as a substring of any word token. This catches conjugations and compounds (e.g., a stem match on a base word also catches its suffixed forms). A bidirectional false-positive filter prevents common words that happen to contain the stem from triggering.
+**Partial-word matching** catches a word even when it's part of a longer word — for example, the stem `ass` matches `badass` or `jackass`. A false-positive list prevents innocent words that happen to contain the same letters (like `class` or `grass`) from triggering.
 
-**Exact matching** uses word-boundary regex for terms that would cause too many false positives as stems (e.g., `hoe`, `piss`).
+**Exact matching** is used for shorter words where partial matching would cause too many false positives (e.g., `hoe`, `piss`).
 
-R-tier matches take priority over PG-13. If any R word is found, the track is rated R regardless of PG-13 matches.
+If a track triggers both tiers, R always wins over PG-13.
 
 ### CSV Report
 
