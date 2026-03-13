@@ -1096,7 +1096,14 @@ def process_library(config: Config) -> list[DetectionResult]:
                 album=album,
                 source="embedded",
             )
-            if tier is not None:
+            if not item_id:
+                log.warning(
+                    "Embedded-lyrics pass: server item at %s has no 'Id' field;"
+                    " cannot update",
+                    norm_path,
+                )
+                dr.action = "not_found_in_server"
+            elif tier is not None:
                 dr.action = _decide_rating_action(
                     client=client,
                     item_id=item_id,
@@ -1151,7 +1158,7 @@ def process_library(config: Config) -> list[DetectionResult]:
                 item_id=item_id,
                 tier="G",
                 current_rating=prev_rating,
-                label=norm_path,
+                label=f"{norm_path} (genre: {matched_genre})",
                 dry_run=config.dry_run,
                 action_dry="dry_run_g_genre",
                 action_already="g_genre_already_correct",
