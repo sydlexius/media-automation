@@ -127,11 +127,17 @@ class Config:
     report_path: Path | None = None
     g_genres: list[str] = field(default_factory=list)
     embedded_lyrics: bool = False
+    lyrics_priority: str = "sidecar"  # "sidecar" | "embedded" | "most_explicit"
 
     def __post_init__(self) -> None:
         if self.server_type not in ("emby", "jellyfin"):
             raise ValueError(
                 f"server_type must be 'emby' or 'jellyfin', got {self.server_type!r}"
+            )
+        if self.lyrics_priority not in ("sidecar", "embedded", "most_explicit"):
+            raise ValueError(
+                f"lyrics_priority must be 'sidecar', 'embedded', or 'most_explicit', "
+                f"got {self.lyrics_priority!r}"
             )
         self._r_exact_patterns = _compile_exact_patterns(self.r_exact)
         self._pg13_exact_patterns = _compile_exact_patterns(self.pg13_exact)
@@ -154,6 +160,9 @@ class DetectionResult:
     artist: str = ""
     album: str = ""
     source: str = ""  # "sidecar" | "embedded" | "genre" | "force"
+    source_conflict: str = (
+        ""  # e.g. "sidecar:PG-13->EMBEDDED:R"; empty when no conflict
+    )
 
 
 # ---------------------------------------------------------------------------
