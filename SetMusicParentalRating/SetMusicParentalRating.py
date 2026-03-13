@@ -1328,9 +1328,20 @@ def print_summary(results: list[DetectionResult]) -> None:
         if r.action in ("g_genre", "g_genre_already_correct", "dry_run_g_genre")
     ]
     sidecar_count = sum(
-        1 for r in scan_results if r.source == "sidecar" or r.action == "no_audio_file"
+        1
+        for r in scan_results
+        if r.sidecar_path is not None or r.action == "no_audio_file"
     )
-    embedded_count = sum(1 for r in scan_results if r.source == "embedded")
+    embedded_only_count = sum(
+        1 for r in scan_results if r.sidecar_path is None and r.source == "embedded"
+    )
+    sidecar_won_count = sum(
+        1 for r in scan_results if r.sidecar_path is not None and r.source == "sidecar"
+    )
+    embedded_won_count = sum(
+        1 for r in scan_results if r.sidecar_path is not None and r.source == "embedded"
+    )
+    conflict_count = sum(1 for r in scan_results if r.source_conflict != "")
     total = len(scan_results)
     r_count = sum(1 for r in scan_results if r.tier == "R")
     pg13_count = sum(1 for r in scan_results if r.tier == "PG-13")
@@ -1338,15 +1349,17 @@ def print_summary(results: list[DetectionResult]) -> None:
     audio_found = sum(
         1
         for r in scan_results
-        if r.source == "sidecar"
+        if r.sidecar_path is not None
         and r.audio_path is not None
         and r.action != "no_audio_file"
     )
     sidecar_server_matched = sum(
-        1 for r in scan_results if r.source == "sidecar" and r.server_item_id
+        1 for r in scan_results if r.sidecar_path is not None and r.server_item_id
     )
     embedded_server_matched = sum(
-        1 for r in scan_results if r.source == "embedded" and r.server_item_id
+        1
+        for r in scan_results
+        if r.sidecar_path is None and r.source == "embedded" and r.server_item_id
     )
     rated = sum(1 for r in results if r.action == "set")
     already = sum(1 for r in results if r.action == "already_correct")
@@ -1365,17 +1378,25 @@ def print_summary(results: list[DetectionResult]) -> None:
     if total:
         if sidecar_count:
             print(f"  Sidecars scanned:    {sidecar_count}")
-        if embedded_count:
-            print(f"  From embedded tags:  {embedded_count}")
+        if sidecar_count and conflict_count:
+            print(f"    Used sidecar lyrics:  {sidecar_won_count}")
+            print(f"    Used embedded lyrics: {embedded_won_count}")
+        if embedded_only_count:
+            print(f"  From embedded tags only: {embedded_only_count}")
         print(f"    R-rated:           {r_count}")
         print(f"    PG-13:             {pg13_count}")
         print(f"    Clean:             {clean}")
         if sidecar_count:
             print(f"  Audio files found:   {audio_found} / {sidecar_count}")
             print(f"  Server items matched: {sidecar_server_matched} / {audio_found}")
-        if embedded_count:
+        if embedded_only_count:
             print(
-                f"  Embedded matched:     {embedded_server_matched} / {embedded_count}"
+                f"  Embedded matched:     {embedded_server_matched} / {embedded_only_count}"
+            )
+        if conflict_count:
+            print(
+                f"  Source conflicts:    {conflict_count}"
+                f"  ← check source_conflict column in report"
             )
     print(f"  Ratings set:         {rated}")
     print(f"  Already correct:     {already}")
