@@ -16,9 +16,10 @@ Scans sidecar lyric files (`.lrc`, `.txt`) for explicit content and sets `Offici
    - **PG-13** — moderate profanity (stem matching against a configurable word list)
 5. Looks up the audio file in the media server via a bulk prefetch of all Audio items
 6. Sets `OfficialRating` on the item via a GET-then-POST round-trip
-7. *(Optional)* Genre pass: any audio item whose `Genres` field contains an entry from `[detection.g_genres]` and has no matching sidecar receives a `G` rating
+7. *(Optional)* Embedded-lyrics pass: tracks without a sidecar are checked for lyrics embedded in their audio metadata (ID3 `USLT`, Vorbis `LYRICS`, etc.) when `--embedded-lyrics` is enabled
+8. *(Optional)* Genre pass: any audio item whose `Genres` field contains an entry from `[detection.g_genres]` and has not been handled by the sidecar or embedded pass receives a `G` rating
 
-**Priority rule**: any track with a matching sidecar file — explicit or clean — is excluded from the genre pass entirely. Sidecar-scanned tracks that are clean will receive no rating from the genre pass, even if their genre would otherwise qualify for G.
+**Priority rule**: sidecar → embedded → genre. Any track processed by the sidecar or embedded pass (explicit or clean) is excluded from the genre pass entirely.
 
 ### Requirements
 
@@ -80,6 +81,10 @@ Options:
   --list-genres             Print all Audio genre tags from the server, then exit
                             (useful for building [detection.g_genres] in the config;
                             library_path is not required)
+  --embedded-lyrics         Also scan embedded lyrics tags (MediaSources) for tracks
+                            with no sidecar file (default: off)
+  --no-embedded-lyrics      Explicitly disable embedded-lyrics scanning, overriding
+                            detection.embedded_lyrics = true in the TOML config
 ```
 
 ### Configuration
@@ -104,6 +109,15 @@ SERVER_TYPE=emby   # or override per-run with --server-type
 ```
 
 **`explicit_config.toml`** — word lists, library path, report output, and genre allow-list. Copy `explicit_config.example.toml` to get started. The script works without any config file using sensible defaults.
+
+**`[detection]`** — top-level detection settings:
+
+```toml
+[detection]
+embedded_lyrics = false   # set to true to scan embedded tag lyrics for tracks with no sidecar
+```
+
+Enabling `embedded_lyrics` adds `MediaSources` to the server prefetch, which increases payload size on large libraries. Use `--no-embedded-lyrics` on the CLI to override a `true` value for a one-off run.
 
 **`[detection.g_genres]`** — optional genre-based G rating. Any audio item whose `Genres` field contains a listed entry (matched **case-insensitively**) and has no matching sidecar file will receive a `G` rating. Omitting the section or leaving `genres = []` disables the feature entirely.
 
@@ -131,11 +145,12 @@ The `--report` flag produces a CSV with columns useful for admin review:
 | `artist` | From server metadata (`AlbumArtist`), falls back to directory structure |
 | `album` | From server metadata (`Album`), falls back to directory structure |
 | `track` | Audio filename |
-| `sidecar` | Sidecar filename |
+| `sidecar` | Sidecar filename (empty for embedded or genre-pass rows) |
 | `tier` | `R`, `PG-13`, `G` (genre-matched), or empty (clean) |
 | `matched_words` | Semicolon-separated list of words that triggered detection |
 | `previous_rating` | What `OfficialRating` was before this run |
 | `action` | `set` · `cleared` · `already_correct` · `skipped` · `not_found_in_server` · `server_unavailable` · `no_audio_file` · `error` · `dry_run` · `dry_run_clear` · `g_genre` · `g_genre_already_correct` · `dry_run_g_genre` |
+| `source` | `sidecar` · `embedded` · `genre` · `force` — identifies which detection pass produced the row |
 
 This lets an admin spot false positives caused by lyric transcription errors (e.g., "cuming" instead of "coming") and take corrective action on the sidecar files.
 
@@ -148,7 +163,7 @@ Both Emby and Jellyfin use the same REST API shape. The only client-visible diff
 | Emby | `X-Emby-Token` |
 | Jellyfin | `X-MediaBrowser-Token` |
 
-- Item listing: `GET /Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path,OfficialRating,AlbumArtist,Album,Genres` (paginated)
+- Item listing: `GET /Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path,OfficialRating,AlbumArtist,Album,Genres` (paginated; `MediaSources` is appended to `Fields` when `--embedded-lyrics` is enabled)
 - Item fetch: `GET /Users/{userId}/Items/{itemId}` (user-scoped; `GET /Items/{id}` returns 404)
 - Item update: `POST /Items/{itemId}` with the full item body (GET-then-POST round-trip preserves existing metadata)
 - Genre listing: `GET /MusicGenres?Recursive=true` (used by `--list-genres`)

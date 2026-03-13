@@ -50,8 +50,6 @@ SIDECAR_EXTENSIONS = frozenset({".lrc", ".txt"})
 DEFAULT_R_STEMS: list[str] = [
     "fuck",
     "shit",
-    "nigga",
-    "nigger",
     "pussy",
     "cock",
     "cum",
@@ -924,24 +922,24 @@ def process_library(config: Config) -> list[DetectionResult]:
                 continue
             tier, matched = classify_lyrics(text, config)
             item_id = item.get("Id", "")
-            if not item_id:
-                log.warning(
-                    "Embedded-lyrics pass: server item at %s has no 'Id' field; skipping",
-                    norm_path,
-                )
-                continue
             dr = DetectionResult(
                 sidecar_path=None,
                 audio_path=Path(norm_path),
                 tier=tier,
                 matched_words=matched,
-                server_item_id=item_id,
+                server_item_id=item_id or None,
                 previous_rating=item.get("OfficialRating", "") or "",
                 artist=item.get("AlbumArtist", "") or "",
                 album=item.get("Album", "") or "",
                 source="embedded",
             )
-            if tier is not None:
+            if not item_id:
+                log.warning(
+                    "Embedded-lyrics pass: server item at %s has no 'Id' field; cannot update",
+                    norm_path,
+                )
+                dr.action = "not_found_in_server"
+            elif tier is not None:
                 if config.dry_run:
                     dr.action = "dry_run"
                 elif (item.get("OfficialRating") or "") == tier:
@@ -1249,7 +1247,9 @@ def print_summary(results: list[DetectionResult]) -> None:
     audio_found = sum(
         1
         for r in scan_results
-        if r.audio_path is not None and r.action != "no_audio_file"
+        if r.source == "sidecar"
+        and r.audio_path is not None
+        and r.action != "no_audio_file"
     )
     server_matched = sum(1 for r in scan_results if r.server_item_id)
     rated = sum(1 for r in results if r.action == "set")
@@ -1273,7 +1273,7 @@ def print_summary(results: list[DetectionResult]) -> None:
         print(f"    R-rated:           {r_count}")
         print(f"    PG-13:             {pg13_count}")
         print(f"    Clean:             {clean}")
-        print(f"  Audio files found:   {audio_found} / {total}")
+        print(f"  Audio files found:   {audio_found} / {sidecar_count}")
         print(f"  Server items matched: {server_matched} / {audio_found}")
     print(f"  Ratings set:         {rated}")
     print(f"  Already correct:     {already}")
