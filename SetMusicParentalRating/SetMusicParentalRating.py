@@ -547,6 +547,51 @@ def match_g_genre(item: dict, g_genres: list[str]) -> str | None:
     return None
 
 
+_TIER_RANK: dict[str | None, int] = {None: 0, "PG-13": 1, "R": 2}
+
+
+def _resolve_priority(
+    sidecar_tier: str | None,
+    sidecar_matched: list[str],
+    embedded_tier: str | None,
+    embedded_matched: list[str],
+    priority: str,
+) -> tuple[str | None, list[str], str, str]:
+    """Return (winning_tier, winning_matched, winning_source, source_conflict).
+
+    winning_source is lowercase ("sidecar" or "embedded") for storage in
+    DetectionResult.source. source_conflict uses uppercase for the winning
+    source name; empty string when both sources agree.
+    None tier is serialized as "clean" in source_conflict.
+    Tie under most_explicit: sidecar wins.
+    """
+
+    def _label(tier: str | None) -> str:
+        return tier if tier is not None else "clean"
+
+    if sidecar_tier == embedded_tier:
+        # Both agree — no conflict, sidecar wins by convention
+        return sidecar_tier, sidecar_matched, "sidecar", ""
+
+    # Sources disagree — compute conflict string regardless of policy
+    if priority == "sidecar":
+        winner, w_matched, w_src = sidecar_tier, sidecar_matched, "sidecar"
+        loser_src, loser_tier = "embedded", embedded_tier
+    elif priority == "embedded":
+        winner, w_matched, w_src = embedded_tier, embedded_matched, "embedded"
+        loser_src, loser_tier = "sidecar", sidecar_tier
+    else:  # most_explicit
+        if _TIER_RANK.get(embedded_tier, 0) > _TIER_RANK.get(sidecar_tier, 0):
+            winner, w_matched, w_src = embedded_tier, embedded_matched, "embedded"
+            loser_src, loser_tier = "sidecar", sidecar_tier
+        else:
+            winner, w_matched, w_src = sidecar_tier, sidecar_matched, "sidecar"
+            loser_src, loser_tier = "embedded", embedded_tier
+
+    conflict = f"{loser_src}:{_label(loser_tier)}->{w_src.upper()}:{_label(winner)}"
+    return winner, w_matched, w_src, conflict
+
+
 # ---------------------------------------------------------------------------
 # Emby API Client
 # ---------------------------------------------------------------------------
