@@ -76,7 +76,7 @@ pre-commit run --all-files
 4. **Detection** (`classify_lyrics`): two-tier word detection — stem matching (substring with false-positive filter) and exact matching (word-boundary regex). R tier takes priority over PG-13.
 5. **Server sync** (`process_library`): bulk prefetches all Audio items by path into `server_items: dict[str, dict]`, then runs three sequential passes, each skipping paths already in `handled_paths`:
    - **Sidecar pass**: processes all `(sidecar, audio)` pairs from `scan_library`; adds each audio path to `handled_paths`. When `config.embedded_lyrics` is on, each sidecar-pass item also checks the server item for embedded lyrics and calls `_resolve_priority` to pick the winning source — see `lyrics_priority` below.
-   - **Embedded pass** (only when `config.embedded_lyrics`): checks `server_items` not yet in `handled_paths` for embedded lyrics in `MediaSources`; adds matched paths to `handled_paths`
+   - **Embedded pass** (only when `config.embedded_lyrics`): for Emby, reads `Extradata` from prefetched `MediaSources`; for Jellyfin, calls `GET /Audio/{itemId}/Lyrics` per track. Adds matched paths to `handled_paths`
    - **Genre pass** (only when `config.g_genres`): assigns `G` to items not yet in `handled_paths` whose `Genres` list overlaps the allow-list
 6. Each track produces one `DetectionResult`. `source` identifies which lyrics source determined the final rating: `"sidecar"` | `"embedded"` | `"genre"` | `"force"`. `source_conflict` is non-empty when both sidecar and embedded lyrics existed and disagreed (format: `"{loser}:{tier}->{WINNER}:{tier}"`). `action` records what happened: `set | cleared | skipped | already_correct | not_found_in_server | server_unavailable | error | no_audio_file | dry_run | dry_run_clear | g_genre | g_genre_already_correct | dry_run_g_genre`.
 
@@ -93,7 +93,7 @@ pre-commit run --all-files
 - Use `--server-type jellyfin` (or `SERVER_TYPE=jellyfin` in `.env`) to target Jellyfin
 - Word lists, library path, and genre allow-list go in `explicit_config.toml` (copy from `explicit_config.example.toml`)
 - Only `explicit_config.example.toml` is committed; all other TOML variants are gitignored
-- `lyrics_priority` (`"sidecar"` | `"embedded"` | `"most_explicit"`, default `"sidecar"`): when `embedded_lyrics` is on and a track has both a sidecar and embedded lyrics, controls which source wins. `most_explicit` picks whichever detected the higher tier. Only meaningful with `embedded_lyrics = true` on Emby (`--embedded-lyrics` has no effect on Jellyfin).
+- `lyrics_priority` (`"sidecar"` | `"embedded"` | `"most_explicit"`, default `"sidecar"`): when `embedded_lyrics` is on and a track has both a sidecar and embedded lyrics, controls which source wins. `most_explicit` picks whichever detected the higher tier. Applies to both Emby and Jellyfin.
 
 ## CI
 

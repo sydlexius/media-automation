@@ -124,7 +124,7 @@ embedded_lyrics = false   # set to true to scan embedded tag lyrics for tracks w
 
 Enabling `embedded_lyrics` adds `MediaSources` to the server prefetch, which increases payload size on large libraries. Use `--no-embedded-lyrics` on the CLI to override a `true` value for a one-off run.
 
-> **Jellyfin note:** `--embedded-lyrics` has no effect when `--server-type jellyfin` is used — only sidecar files are scanned. The script reads embedded lyrics via Emby's `MediaSources` API; Jellyfin uses a different endpoint (`GET /Audio/{itemId}/Lyrics`) that is not currently supported.
+> **Jellyfin note:** When `--server-type jellyfin` is used, embedded lyrics are fetched via `GET /Audio/{itemId}/Lyrics` (one request per track with no sidecar). Jellyfin serves these natively — no plugin required. On large libraries this pass may take a moment; an info log line shows how many tracks will be queried.
 
 ### `--lyrics-priority {sidecar,embedded,most_explicit}`
 
