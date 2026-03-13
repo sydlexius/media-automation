@@ -122,9 +122,9 @@ SERVER_TYPE=emby   # or override per-run with --server-type
 embedded_lyrics = false   # set to true to scan embedded tag lyrics for tracks with no sidecar
 ```
 
-Enabling `embedded_lyrics` adds `MediaSources` to the server prefetch, which increases payload size on large libraries. Use `--no-embedded-lyrics` on the CLI to override a `true` value for a one-off run.
+On Emby, enabling `embedded_lyrics` adds `MediaSources` to the bulk prefetch, increasing payload size on large libraries. On Jellyfin, it adds per-track `GET /Audio/{itemId}/Lyrics` calls instead (see Jellyfin note below).
 
-> **Jellyfin note:** When `--server-type jellyfin` is used, embedded lyrics are fetched via `GET /Audio/{itemId}/Lyrics` (one request per track with no sidecar). Jellyfin serves these natively — no plugin required. On large libraries this pass may take a moment; an info log line shows how many tracks will be queried.
+> **Jellyfin note:** When `--server-type jellyfin` is used, `GET /Audio/{itemId}/Lyrics` is called for every track in scope — including sidecar-matched tracks (to resolve priority / record conflicts in `source_conflict`) and tracks with no sidecar. No plugin required. On large libraries with many sidecars this adds a substantial number of sequential requests; an info log line shows the embedded-pass count before that loop starts.
 
 ### `--lyrics-priority {sidecar,embedded,most_explicit}`
 
@@ -133,7 +133,7 @@ Controls which lyrics source determines the rating when a track has **both** a s
 | Value | Behaviour |
 |---|---|
 | `sidecar` *(default)* | Sidecar always wins — use this if you curated your sidecar files deliberately |
-| `embedded` | Embedded tag always wins |
+| `embedded` | Embedded tag wins when sources disagree — ties (equal tiers) still defer to sidecar |
 | `most_explicit` | Whichever source detected the higher tier wins (R > PG-13 > clean) — recommended for maximum protection |
 
 When the two sources disagree, the `source_conflict` column in the CSV report shows which source lost and what it detected, e.g. `sidecar:PG-13->EMBEDDED:R`.

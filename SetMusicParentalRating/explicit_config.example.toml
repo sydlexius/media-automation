@@ -27,7 +27,9 @@ url = "http://localhost:8097"
 
 [detection]
 # Set to true to also scan embedded lyrics tags for tracks with no sidecar file.
-# Enabling this increases the server prefetch payload size. Emby only — has no effect on Jellyfin.
+# On Emby this adds MediaSources to the bulk prefetch (larger payload); on Jellyfin it adds
+# one per-track lyrics request for sidecar-matched tracks (priority/conflict resolution) plus
+# one per-track request for tracks with no sidecar.
 # If you enable this, consider also uncommenting lyrics_priority below.
 embedded_lyrics = false
 
@@ -35,7 +37,7 @@ embedded_lyrics = false
 # Only applies when embedded_lyrics = true. Defaults to "sidecar" if unset.
 #   most_explicit: whichever source detected the higher tier wins (R > PG-13 > clean)
 #   sidecar:       sidecar always wins
-#   embedded:      embedded tag always wins
+#   embedded:      embedded tag wins (ties — equal tiers — still defer to sidecar)
 # lyrics_priority = "most_explicit"
 
 [detection.r]

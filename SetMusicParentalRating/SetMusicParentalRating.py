@@ -102,6 +102,10 @@ log = logging.getLogger(__name__)
 class MediaServerError(Exception):
     """Raised when a media server API call fails."""
 
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 # ---------------------------------------------------------------------------
 # Dataclasses
@@ -646,7 +650,8 @@ class MediaServerClient:
             except Exception as inner_exc:
                 log.debug("Could not read HTTP error body: %s", inner_exc)
             raise MediaServerError(
-                f"HTTP {exc.code} on {method} {path}: {body_snippet}"
+                f"HTTP {exc.code} on {method} {path}: {body_snippet}",
+                status_code=exc.code,
             ) from exc
         except urllib.error.URLError as exc:
             raise MediaServerError(
@@ -732,7 +737,7 @@ class MediaServerClient:
         try:
             data = self._request("GET", f"/Audio/{item_id}/Lyrics")
         except MediaServerError as exc:
-            if "HTTP 404" in str(exc):
+            if exc.status_code == 404:
                 return ""
             log.warning("Jellyfin lyrics fetch failed for item %s: %s", item_id, exc)
             return ""
@@ -1354,7 +1359,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Which source wins when a track has both a sidecar (.lrc/.txt) and embedded lyrics. "
             "Only applies when --embedded-lyrics is on. "
-            "Default: sidecar. most_explicit picks whichever detected the higher tier."
+            "Default: sidecar. most_explicit picks whichever detected the higher tier. "
+            "Ties (both sources at the same tier) always defer to sidecar regardless of priority."
         ),
     )
     return parser
