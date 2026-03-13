@@ -843,10 +843,10 @@ def _normalize_path(p: str) -> str:
     return os.path.normcase(os.path.normpath(p)).replace("\\", "/")
 
 
-def _item_fields(item: dict) -> tuple[str, str, str, str]:
+def _item_fields(item: dict) -> tuple[str | None, str, str, str]:
     """Extract (item_id, previous_rating, artist, album) from a server item."""
     return (
-        item.get("Id", "") or "",
+        item.get("Id"),
         item.get("OfficialRating", "") or "",
         item.get("AlbumArtist", "") or "",
         item.get("Album", "") or "",
@@ -1001,7 +1001,7 @@ def process_library(config: Config) -> list[DetectionResult]:
         server_item = server_items.get(norm_audio)
         if server_item:
             item_id, prev_rating, artist, album = _item_fields(server_item)
-            dr.server_item_id = item_id or None
+            dr.server_item_id = item_id
             dr.previous_rating = prev_rating
             dr.artist = artist
             dr.album = album
@@ -1090,7 +1090,7 @@ def process_library(config: Config) -> list[DetectionResult]:
                 audio_path=Path(norm_path),
                 tier=tier,
                 matched_words=matched,
-                server_item_id=item_id or None,
+                server_item_id=item_id,
                 previous_rating=prev_rating,
                 artist=artist,
                 album=album,
@@ -1099,7 +1099,7 @@ def process_library(config: Config) -> list[DetectionResult]:
             if tier is not None:
                 dr.action = _decide_rating_action(
                     client=client,
-                    item_id=item_id or None,
+                    item_id=item_id,
                     tier=tier,
                     current_rating=prev_rating,
                     label=norm_path,
@@ -1108,7 +1108,7 @@ def process_library(config: Config) -> list[DetectionResult]:
             elif config.clear:
                 dr.action = _decide_clear_action(
                     client=client,
-                    item_id=item_id or None,
+                    item_id=item_id,
                     current_rating=prev_rating,
                     label=norm_path,
                     dry_run=config.dry_run,
