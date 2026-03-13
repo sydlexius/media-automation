@@ -909,6 +909,18 @@ def process_library(config: Config) -> list[DetectionResult]:
             dr.artist = server_item.get("AlbumArtist", "") or ""
             dr.album = server_item.get("Album", "") or ""
 
+        # Priority resolution — when both sidecar and embedded lyrics exist
+        if config.embedded_lyrics and server_item:
+            embedded_text = extract_embedded_lyrics(server_item)
+            if embedded_text:
+                emb_tier, emb_matched = classify_lyrics(embedded_text, config)
+                tier, matched, winning_source, dr.source_conflict = _resolve_priority(
+                    tier, matched, emb_tier, emb_matched, config.lyrics_priority
+                )
+                dr.source = winning_source
+                dr.tier = tier
+                dr.matched_words = matched
+
         # Decide action
         if tier is not None:
             # Explicit content found — set rating
