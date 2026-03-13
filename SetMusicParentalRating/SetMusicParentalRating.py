@@ -745,6 +745,13 @@ class MediaServerClient:
             return ""
         if not data:
             return ""
+        if not isinstance(data, dict):
+            log.warning(
+                "Jellyfin lyrics endpoint returned unexpected type %s for item %s",
+                type(data).__name__,
+                item_id,
+            )
+            return ""
         raw_lyrics = data.get("Lyrics") or []
         if not isinstance(raw_lyrics, list):
             log.warning(

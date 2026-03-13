@@ -173,5 +173,6 @@ The `--report` flag produces a CSV with columns useful for admin review:
 | `previous_rating` | What `OfficialRating` was before this run |
 | `action` | `set` · `cleared` · `already_correct` · `skipped` · `not_found_in_server` · `server_unavailable` · `no_audio_file` · `error` · `dry_run` · `dry_run_clear` · `g_genre` · `g_genre_already_correct` · `dry_run_g_genre` |
 | `source` | `sidecar` · `embedded` · `genre` · `force` — identifies which detection pass produced the row |
+| `source_conflict` | Non-empty when sidecar and embedded lyrics disagree; format: `{loser}:{tier}->{WINNER}:{tier}` (e.g. `sidecar:PG-13->EMBEDDED:R`). Loser is lowercase, winner is uppercase; tier is `R`, `PG-13`, or `clean`. Empty when sources agree or only one source was in scope. |
 
 This lets an admin spot false positives caused by lyric transcription errors (e.g., "cuming" instead of "coming") and take corrective action on the sidecar files.
