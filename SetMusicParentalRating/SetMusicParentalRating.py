@@ -940,9 +940,13 @@ def process_library(config: Config) -> list[DetectionResult]:
             dr.album = server_item.get("Album", "") or ""
 
         # Augment sidecar classification with embedded lyrics if present
-        if config.embedded_lyrics and server_item:
+        if config.embedded_lyrics and server_item and client is not None:
             try:
-                embedded_text = extract_embedded_lyrics(server_item)
+                if config.server_type == "jellyfin":
+                    _sid = server_item.get("Id", "")
+                    embedded_text = client.fetch_lyrics_jellyfin(_sid) if _sid else ""
+                else:
+                    embedded_text = extract_embedded_lyrics(server_item)
                 if embedded_text:
                     emb_tier, emb_matched = classify_lyrics(embedded_text, config)
                     tier, matched, winning_source, dr.source_conflict = (
@@ -1026,12 +1030,28 @@ def process_library(config: Config) -> list[DetectionResult]:
     # --- Embedded lyrics pass ---
     if config.embedded_lyrics and client is not None:
         lib_root = Path(_normalize_path(str(config.library_path)))
+        if config.server_type == "jellyfin":
+            candidate_count = sum(
+                1
+                for p in server_items
+                if p not in handled_paths and Path(p).is_relative_to(lib_root)
+            )
+            if candidate_count:
+                log.info(
+                    "Embedded lyrics pass: querying Jellyfin for %d tracks individually"
+                    " (one request per track)...",
+                    candidate_count,
+                )
         for norm_path, item in server_items.items():
             if norm_path in handled_paths:
                 continue
             if not Path(norm_path).is_relative_to(lib_root):
                 continue
-            text = extract_embedded_lyrics(item)
+            if config.server_type == "jellyfin":
+                _iid = item.get("Id", "")
+                text = client.fetch_lyrics_jellyfin(_iid) if _iid else ""
+            else:
+                text = extract_embedded_lyrics(item)
             if not text:
                 continue
             tier, matched = classify_lyrics(text, config)
