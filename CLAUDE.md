@@ -78,8 +78,10 @@ pre-commit run --all-files
 
 ### API pattern (Emby and Jellyfin)
 - Auth: `X-Emby-Token` header (Emby) or `X-MediaBrowser-Token` header (Jellyfin)
+- Bulk audio listing: `GET /Users/{userId}/Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path,OfficialRating,AlbumArtist,Album,Genres` (paginated at 500; `MediaSources` appended to `Fields` when `--embedded-lyrics` is enabled)
 - Item reads are user-scoped: `GET /Users/{userId}/Items/{id}` (not `GET /Items/{id}` which returns 404)
 - Item updates require the full item body: `POST /Items/{id}` with the complete JSON from the GET
+- Genre listing: `GET /MusicGenres?Recursive=true` (used by `--list-genres`)
 
 ### Configuration
 - Secrets (API key, URL) go in `.env` at the repo root — never in TOML or committed files
