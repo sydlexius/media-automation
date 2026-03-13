@@ -132,8 +132,9 @@ class Config:
     g_genres: list[str] = field(default_factory=list)
     embedded_lyrics: bool = False
     lyrics_priority: str = "sidecar"  # "sidecar" | "embedded" | "most_explicit"
-    # Per-server credentials — always populated when the env vars exist; used by
-    # main() to build derived configs in --server-type both mode.
+    # Per-server credentials — populated from env vars, .env file, or TOML
+    # [emby]/[jellyfin] sections; used by main() to build derived configs in
+    # --server-type both mode.
     emby_url: str = ""
     emby_api_key: str = ""
     jellyfin_url: str = ""
@@ -322,19 +323,26 @@ def build_config(args: argparse.Namespace) -> Config:
         or ""
     ).strip()
 
-    has_emby = bool(emby_url)
-    has_jellyfin = bool(jellyfin_url)
+    has_emby = bool(emby_url and emby_api_key)
+    has_jellyfin = bool(jellyfin_url and jellyfin_api_key)
 
     if explicit_type:
         server_type = explicit_type
         if server_type == "both":
-            if not has_emby:
+            if cli_server_url or cli_api_key:
+                print(
+                    "Error: --server-url and --api-key are not supported with --server-type both. "
+                    "Set credentials via EMBY_URL/EMBY_API_KEY and JELLYFIN_URL/JELLYFIN_API_KEY.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if not emby_url or not emby_api_key:
                 print(
                     "Error: --server-type both requires EMBY_URL and EMBY_API_KEY",
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            if not has_jellyfin:
+            if not jellyfin_url or not jellyfin_api_key:
                 print(
                     "Error: --server-type both requires JELLYFIN_URL and JELLYFIN_API_KEY",
                     file=sys.stderr,
@@ -1568,11 +1576,24 @@ def main() -> None:
             server_url=config.jellyfin_url,
             server_api_key=config.jellyfin_api_key,
         )
+        log.info("--- Starting Emby run ---")
         if config.force_rating:
-            emby_results = force_rate_library(emby_cfg)
-            jf_results = force_rate_library(jf_cfg)
+            try:
+                emby_results = force_rate_library(emby_cfg)
+            except SystemExit:
+                log.error("Emby run failed; Jellyfin run will still proceed.")
+                emby_results = []
         else:
             emby_results = process_library(emby_cfg)
+
+        log.info("--- Starting Jellyfin run ---")
+        if config.force_rating:
+            try:
+                jf_results = force_rate_library(jf_cfg)
+            except SystemExit:
+                log.error("Jellyfin run failed.")
+                jf_results = []
+        else:
             jf_results = process_library(jf_cfg)
         results = emby_results + jf_results
         if config.report_path:

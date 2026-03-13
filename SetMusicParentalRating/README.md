@@ -73,11 +73,14 @@ Options:
   --env-file PATH           .env file to load (default: .env in repo root; e.g. --env-file .env.prod)
   --server-type TYPE        'emby', 'jellyfin', or 'both' — auto-detected from configured
                             server URLs (env vars or TOML) when only one server is active;
-                            'both' runs process_library twice (once per server) using the
-                            same config, then merges results into a single CSV report with
-                            a 'server' column. Can also be set via SERVER_TYPE env var or
-                            [general].server_type in TOML. --list-genres is not supported
-                            with 'both' (run each server separately).
+                            'both' runs process_library twice (once per Emby, once per
+                            Jellyfin) using a shared config (word lists, library path,
+                            dry-run, etc.), then merges results into a single CSV with a
+                            'server' column. Note: --server-url and --api-key are not
+                            supported in 'both' mode — set credentials via per-server env
+                            vars. --list-genres is not supported with 'both' (run each
+                            server separately). Can also be set via SERVER_TYPE env var or
+                            [general].server_type in TOML.
   --server-url URL          Server URL — overrides the env var for the active server type
   --api-key KEY             API key — overrides the env var for the active server type
   -n, --dry-run             Analyze only, no server updates
@@ -112,7 +115,7 @@ Settings are merged in priority order: **CLI flags > env vars > `.env` file > TO
 EMBY_URL=http://localhost:8096
 EMBY_API_KEY=your-emby-key-here
 
-# Both servers configured — SERVER_TYPE is then required to disambiguate
+# Both servers configured — SERVER_TYPE must be set to choose one or both
 EMBY_URL=http://localhost:8096
 EMBY_API_KEY=your-emby-key-here
 JELLYFIN_URL=http://localhost:8097
