@@ -745,10 +745,17 @@ class MediaServerClient:
             return ""
         if not data:
             return ""
+        raw_lyrics = data.get("Lyrics") or []
+        if not isinstance(raw_lyrics, list):
+            log.warning(
+                "Jellyfin lyrics payload has unexpected Lyrics type for item %s",
+                item_id,
+            )
+            return ""
         lines = [
             entry.get("Text", "")
-            for entry in data.get("Lyrics", [])
-            if entry.get("Text")
+            for entry in raw_lyrics
+            if isinstance(entry, dict) and entry.get("Text")
         ]
         return strip_lrc_tags("\n".join(lines))
 
