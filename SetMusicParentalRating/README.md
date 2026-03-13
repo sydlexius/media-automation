@@ -81,8 +81,11 @@ Options:
   --list-genres             Print all Audio genre tags from the server, then exit
                             (useful for building [detection.g_genres] in the config;
                             library_path is not required)
-  --embedded-lyrics         Also scan embedded lyrics tags (MediaSources) for tracks
-                            with no sidecar file (default: off)
+  --embedded-lyrics         Scan embedded lyrics tags for explicit content. On Emby,
+                            adds MediaSources to the bulk prefetch. On Jellyfin, adds
+                            one GET /Audio/{id}/Lyrics per track in scope (including
+                            sidecar-matched tracks, for --lyrics-priority resolution).
+                            (default: off)
   --no-embedded-lyrics      Explicitly disable embedded-lyrics scanning, overriding
                             detection.embedded_lyrics = true in the TOML config
   --lyrics-priority {sidecar,embedded,most_explicit}

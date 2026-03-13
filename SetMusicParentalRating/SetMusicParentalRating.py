@@ -663,8 +663,10 @@ class MediaServerClient:
     ) -> dict[str, dict]:
         """Paginated fetch of all Audio items. Returns {normalized_path: item}.
 
-        Pass include_media_sources=True to include MediaSources (and embedded
-        lyrics in MediaStreams.Extradata) at the cost of a larger payload.
+        Pass include_media_sources=True to append MediaSources to the Fields
+        parameter on Emby (includes embedded lyrics in MediaStreams.Extradata at
+        the cost of a larger payload). On Jellyfin this flag has no effect —
+        embedded lyrics are fetched per-track via /Audio/{id}/Lyrics by the caller.
         """
         fields = "Path,OfficialRating,AlbumArtist,Album,Genres"
         if include_media_sources and self.server_type == "emby":
@@ -1350,7 +1352,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--embedded-lyrics",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Fall back to embedded tag lyrics when no sidecar file exists (default: off)",
+        help=(
+            "Scan embedded tag lyrics for explicit content. "
+            "On Emby, adds MediaSources to the bulk prefetch. "
+            "On Jellyfin, adds one GET /Audio/{id}/Lyrics request per track in scope — "
+            "including sidecar-matched tracks (for --lyrics-priority resolution). "
+            "(default: off)"
+        ),
     )
     parser.add_argument(
         "--lyrics-priority",
