@@ -165,7 +165,7 @@ class DetectionResult:
     previous_rating: str = ""
     artist: str = ""
     album: str = ""
-    source: str = ""  # "sidecar" | "embedded" | "genre" | "force"
+    source: str = ""  # "lyrics" | "genre" | "force"
     server_type: str = (
         ""  # "emby" | "jellyfin"; populated by process_library / force_rate_library
     )
