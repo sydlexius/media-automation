@@ -22,6 +22,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Re-request Copilot review
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
