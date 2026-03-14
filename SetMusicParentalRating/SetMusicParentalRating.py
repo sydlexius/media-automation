@@ -812,6 +812,8 @@ class MediaServerClient:
         try:
             data = self._request("GET", f"/Audio/{item_id}/Lyrics")
         except MediaServerError as exc:
+            if exc.status_code in (401, 403):
+                raise  # auth/permission — don't mask
             if exc.status_code == 404:
                 return ""
             log.warning("Jellyfin lyrics fetch failed for item %s: %s", item_id, exc)
@@ -1107,9 +1109,28 @@ def process_library(config: Config) -> list[DetectionResult]:
         log.error("Failed to prefetch server items: %s", exc)
         sys.exit(1)
 
+    # Scope to configured library paths (if provided)
+    if config.library_paths:
+        lib_roots = [Path(_normalize_path(str(lp))) for lp in config.library_paths]
+        items_in_scope = {
+            path: item
+            for path, item in server_items.items()
+            if _is_under_roots(path, lib_roots)
+        }
+        paths_display = ", ".join(str(lp) for lp in config.library_paths)
+        log.info(
+            "Scanning %d items under %s (of %d total)",
+            len(items_in_scope),
+            paths_display,
+            len(server_items),
+        )
+    else:
+        items_in_scope = server_items
+        log.info("Scanning all %d items (no library path filter)", len(server_items))
+
     results: list[DetectionResult] = []
 
-    for norm_path, item in server_items.items():
+    for norm_path, item in items_in_scope.items():
         item_id, prev_rating, artist, album = _item_fields(item)
         if not item_id:
             continue
@@ -1120,7 +1141,7 @@ def process_library(config: Config) -> list[DetectionResult]:
         except MediaServerError as exc:
             if exc.status_code in (401, 403):
                 log.error("Auth/permission error fetching lyrics: %s", exc)
-                break  # abort scan — credentials are bad
+                sys.exit(1)
             log.warning("Failed to fetch lyrics for %s: %s", norm_path, exc)
             lyrics_text = None
 
