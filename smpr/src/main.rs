@@ -54,15 +54,28 @@ struct CommonOpts {
 
 /// Overwrite/skip behavior for rate and force subcommands.
 #[derive(Args, Clone)]
-#[group(multiple = false)]
 struct OverwriteOpts {
     /// Re-evaluate tracks that already have a rating (default unless changed in config)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "skip_existing")]
     overwrite: bool,
 
     /// Skip tracks that already have any rating (overrides config default)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "overwrite")]
     skip_existing: bool,
+}
+
+impl OverwriteOpts {
+    /// Resolve to Option<bool>: Some(true)=overwrite, Some(false)=skip, None=use config default.
+    #[expect(dead_code, reason = "used once config loading is implemented (#67)")]
+    fn resolve(&self) -> Option<bool> {
+        if self.overwrite {
+            Some(true)
+        } else if self.skip_existing {
+            Some(false)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Parser)]
