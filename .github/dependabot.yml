@@ -1,13 +1,25 @@
 version: 2
 updates:
-  - package-ecosystem: github-actions
-    directory: /
+  - package-ecosystem: "cargo"
+    directory: "/smpr"
     schedule:
-      interval: weekly
-      day: monday
-    commit-message:
-      prefix: "ci"
+      interval: "weekly"
     labels:
-      - dependencies
-      - ci
-    open-pull-requests-limit: 5
+      - "dependencies"
+      - "rust"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "python"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "ci"

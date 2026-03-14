@@ -1,0 +1,28 @@
+[package]
+name = "smpr"
+version = "0.1.0"
+edition = "2024"
+description = "Fetch lyrics from Emby/Jellyfin, detect explicit content, set parental ratings"
+license = "MIT"
+rust-version = "1.85"
+
+[[bin]]
+name = "smpr"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+csv = "1"
+dotenvy = "0.15"
+ratatui = "0.29"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+ureq = { version = "3", features = ["json"] }
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "z"  # optimize for size

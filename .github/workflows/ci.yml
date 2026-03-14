@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  lint:
-    name: Lint
+  lint-python:
+    name: Lint (Python)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -29,8 +29,8 @@ jobs:
       - name: Run ruff format check
         run: ruff format --check .
 
-  test:
-    name: Test
+  test-python:
+    name: Test (Python)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -50,3 +50,47 @@ jobs:
         run: python -m pytest tests/ -v --tb=short
         working-directory: SetMusicParentalRating
         if: hashFiles('SetMusicParentalRating/tests/**') != ''
+
+  lint-rust:
+    name: Lint (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: smpr
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: smpr
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+  test-rust:
+    name: Test (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: smpr
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: smpr
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Build release
+        run: cargo build --release
