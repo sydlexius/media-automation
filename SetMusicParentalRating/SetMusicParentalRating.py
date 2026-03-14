@@ -1561,7 +1561,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # --- rate subcommand ---
-    force_parser = subparsers.add_parser(
+    rate_parser = subparsers.add_parser(
         "rate",
         parents=[shared],
         help="Set a fixed rating on all tracks under the given path(s)",
@@ -1570,22 +1570,22 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_RATE_EXAMPLES,
     )
-    force_parser.add_argument(
+    rate_parser.add_argument(
         "library_path",
         nargs="+",
         help="Library root directory/directories",
     )
-    force_parser.add_argument(
+    rate_parser.add_argument(
         "rating",
         help="Rating to set on all tracks (e.g. G, PG-13, R)",
     )
-    force_parser.add_argument(
+    rate_parser.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
         help="Analyze only — no server updates",
     )
-    force_parser.add_argument(
+    rate_parser.add_argument(
         "--report",
         default=None,
         help="CSV report output path",
