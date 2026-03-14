@@ -699,6 +699,38 @@ class MediaServerClient:
                 f"Connection error on {method} {path}: {exc.reason}"
             ) from exc
 
+    def _request_text(self, method: str, path: str) -> str:
+        """Like _request(), but returns the raw response body as text.
+
+        Used for endpoints that return plain text instead of JSON (e.g. the
+        subtitle stream endpoint).  Raises MediaServerError on HTTP/connection
+        errors, just like _request().
+        """
+        url = f"{self.base_url}{path}"
+        req = urllib.request.Request(url, method=method)
+        if self.server_type == "jellyfin":
+            req.add_header("X-MediaBrowser-Token", self.api_key)
+        else:
+            req.add_header("X-Emby-Token", self.api_key)
+        log.debug("%s %s %s (text)", self.server_type.title(), method, url)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            body_snippet = ""
+            try:
+                body_snippet = exc.read().decode("utf-8", errors="replace")[:1024]
+            except Exception as inner_exc:
+                log.debug("Could not read HTTP error body: %s", inner_exc)
+            raise MediaServerError(
+                f"HTTP {exc.code} on {method} {path}: {body_snippet}",
+                status_code=exc.code,
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise MediaServerError(
+                f"Connection error on {method} {path}: {exc.reason}"
+            ) from exc
+
     def prefetch_audio_items(
         self, *, include_media_sources: bool = False
     ) -> dict[str, dict]:
@@ -806,6 +838,74 @@ class MediaServerClient:
             if isinstance(entry, dict) and entry.get("Text")
         ]
         return strip_lrc_tags("\n".join(lines))
+
+    def fetch_lyrics_emby(self, item: dict) -> str:
+        """Fetch lyrics for an Emby audio item via the subtitle stream endpoint.
+
+        Checks the item's ``MediaSources[].MediaStreams[]`` for external subtitle
+        streams (``Type="Subtitle"``, ``Codec="lrc"``, ``IsExternal=True``) and
+        fetches the lyrics text via
+        ``GET /Videos/{itemId}/{mediaSourceId}/Subtitles/{streamIndex}/Stream.txt``.
+
+        If no external subtitle stream is found, falls back to embedded lyrics
+        extracted from ``Extradata`` on internal subtitle streams.
+
+        Returns plain lyric text (LRC timestamps stripped), or ``""`` if no
+        lyrics are found.
+        """
+        item_id = item.get("Id", "")
+        item_path = item.get("Path", "<unknown>")
+        if not item_id:
+            log.warning("Item missing 'Id' for %s; cannot fetch lyrics", item_path)
+            return ""
+
+        # --- Try external subtitle streams first ---
+        for source in item.get("MediaSources") or []:
+            media_source_id = source.get("Id", "")
+            if not media_source_id:
+                log.debug("MediaSource missing 'Id' for %s; skipping source", item_path)
+                continue
+            for stream in source.get("MediaStreams") or []:
+                if stream.get("Type") != "Subtitle":
+                    continue
+                if not stream.get("IsExternal", False):
+                    continue
+                if stream.get("Codec", "").lower() != "lrc":
+                    continue
+                stream_index = stream.get("Index")
+                if stream_index is None:
+                    log.debug(
+                        "External subtitle stream missing Index for %s; skipping",
+                        item_path,
+                    )
+                    continue
+                path = (
+                    f"/Videos/{item_id}/{media_source_id}"
+                    f"/Subtitles/{stream_index}/Stream.txt"
+                )
+                try:
+                    text = self._request_text("GET", path)
+                except MediaServerError as exc:
+                    if exc.status_code in (401, 403):
+                        raise  # auth/permission — don't mask
+                    log.warning(
+                        "Emby subtitle fetch failed for %s (stream %s): %s",
+                        item_path,
+                        stream_index,
+                        exc,
+                    )
+                    continue
+                if text.strip():
+                    return strip_lrc_tags(text)
+                log.debug(
+                    "External subtitle stream for %s (stream %s) returned "
+                    "empty/whitespace text; trying next stream",
+                    item_path,
+                    stream_index,
+                )
+
+        # --- Fallback: embedded lyrics from Extradata ---
+        return extract_embedded_lyrics(item)
 
     def update_item(self, item_id: str, item_body: dict) -> None:
         """POST /Items/{id} — send full item body with modified fields."""
