@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""SetMusicParentalRating — scan sidecar lyric files for explicit content and
-set OfficialRating on matching audio tracks via the Emby or Jellyfin API.
+"""SetMusicParentalRating — fetch lyrics from the Emby or Jellyfin API, detect
+explicit content, and set OfficialRating on matching audio tracks.
 
 Python 3.11+ recommended (uses tomllib from stdlib).
 On older Python, falls back to the tomli package.
@@ -1229,7 +1229,7 @@ def _decide_rating_action(
     action_dry: str = "dry_run",
     action_already: str = "already_correct",
 ) -> str:
-    """Common rating-decision logic for sidecar, embedded, and genre passes."""
+    """Common rating-decision logic for lyrics and genre passes."""
     if client is None:
         return "server_unavailable"
     if not item_id:
@@ -1255,7 +1255,7 @@ def _decide_clear_action(
     label: str,
     dry_run: bool,
 ) -> str:
-    """Common clear-decision logic for sidecar and embedded passes."""
+    """Common clear-decision logic for lyrics pass."""
     if client is None:
         return "server_unavailable"
     if not item_id:
@@ -1286,7 +1286,7 @@ examples:
   # Multiple library paths in a single run
   %(prog)s /path/to/music /path/to/classical --dry-run
 
-  # Clear stale ratings after fixing sidecar typos
+  # Clear stale ratings from tracks with clean lyrics
   %(prog)s /path/to/music --clear
 """
 
@@ -1310,7 +1310,7 @@ examples:
 
 _MAIN_EXAMPLES = """\
 subcommands:
-  scan    Scan sidecar/embedded lyrics and set ratings
+  scan    Fetch lyrics from server, detect explicit content, set ratings
   rate    Set a fixed rating on all tracks under the given path(s)
   genres  List all Audio genre tags from the server
 
@@ -1360,8 +1360,8 @@ def build_parser() -> argparse.ArgumentParser:
     # --- top-level parser ---
     parser = argparse.ArgumentParser(
         prog="SetMusicParentalRating",
-        description="Scan sidecar lyric files for explicit content and set "
-        "OfficialRating on matching tracks via the Emby or Jellyfin API.",
+        description="Fetch lyrics from the Emby or Jellyfin API, detect explicit "
+        "content, and set OfficialRating on matching audio tracks.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_MAIN_EXAMPLES,
     )
@@ -1375,9 +1375,9 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser = subparsers.add_parser(
         "scan",
         parents=[shared],
-        help="Scan sidecar/embedded lyrics and set ratings",
-        description="Scan sidecar and embedded lyrics for explicit content, "
-        "then set OfficialRating on matching tracks.",
+        help="Fetch lyrics from server, detect explicit content, set ratings",
+        description="Fetch lyrics from the media server API, detect explicit "
+        "content, and set OfficialRating on matching tracks.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_SCAN_EXAMPLES,
     )
@@ -1401,7 +1401,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--clear",
         action="store_true",
-        help="Clear ratings from tracks whose sidecars exist but contain no explicit words",
+        help="Clear ratings from tracks whose lyrics contain no explicit words",
     )
 
     # --- rate subcommand ---
