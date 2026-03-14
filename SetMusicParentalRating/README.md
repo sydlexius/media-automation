@@ -38,76 +38,68 @@ cp .env.example .env
 #           or JELLYFIN_API_KEY and JELLYFIN_URL (for Jellyfin)
 
 # 2. Dry run — analyze without touching the server (default)
-python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --dry-run --report report.csv
+python3 SetMusicParentalRating/SetMusicParentalRating.py scan /path/to/music --dry-run --report report.csv
 
 # 2b. Multiple library paths in a single run
-python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music /path/to/classical --dry-run --report report.csv
+python3 SetMusicParentalRating/SetMusicParentalRating.py scan /path/to/music /path/to/classical --dry-run --report report.csv
 
 # 3. Dry run against Jellyfin
-python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --server-type jellyfin --dry-run
+python3 SetMusicParentalRating/SetMusicParentalRating.py scan /path/to/music --server-type jellyfin --dry-run
 
 # 3b. Dry run against both Emby and Jellyfin simultaneously
-python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --server-type both --dry-run --report /tmp/both.csv
+python3 SetMusicParentalRating/SetMusicParentalRating.py scan /path/to/music --server-type both --dry-run --report /tmp/both.csv
 
 # 4. Live run — set ratings
-python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --report report.csv
+python3 SetMusicParentalRating/SetMusicParentalRating.py scan /path/to/music --report report.csv
 
-# 5. Force-rate a known-clean library (e.g., classical)
-python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/classical --force-rating G
+# 5. Rate a known-clean library (e.g., classical)
+python3 SetMusicParentalRating/SetMusicParentalRating.py rate /path/to/classical G
 
 # 6. Clear stale ratings after fixing sidecar typos
-python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --clear
+python3 SetMusicParentalRating/SetMusicParentalRating.py scan /path/to/music --clear
 
 # 7. Discover what genre strings exist in your library (for g_genres config)
-python3 SetMusicParentalRating/SetMusicParentalRating.py --list-genres
-python3 SetMusicParentalRating/SetMusicParentalRating.py --server-type jellyfin --list-genres
+python3 SetMusicParentalRating/SetMusicParentalRating.py genres
+python3 SetMusicParentalRating/SetMusicParentalRating.py genres --server-type jellyfin
 ```
 
 ### CLI Reference
 
+The script uses three subcommands: **`scan`** (default), **`rate`**, and **`genres`**. Old-style invocations without a subcommand still work via automatic rewriting (e.g. bare paths imply `scan`, `--force-rating` rewrites to `rate`, `--list-genres` rewrites to `genres`).
+
 ```text
-SetMusicParentalRating.py [library_path ...] [options]
+SetMusicParentalRating.py {scan,rate,genres} [options]
 
-Positional:
-  library_path              Library root(s) — one or more paths (overrides config)
-
-Options:
+Shared options (all subcommands):
   --version                 Show program version and exit
   --config PATH             TOML config file (default: explicit_config.toml in script dir)
   --env-file PATH           .env file to load (default: .env in repo root; e.g. --env-file .env.prod)
   --server-type TYPE        'emby', 'jellyfin', or 'both' — auto-detected from configured
-                            server URLs (env vars or TOML) when only one server is active;
-                            'both' runs process_library twice (once per Emby, once per
-                            Jellyfin) using a shared config (word lists, library path,
-                            dry-run, etc.), then merges results into a single CSV with a
-                            'server' column. Note: --server-url and --api-key are not
-                            supported in 'both' mode — set credentials via per-server env
-                            vars. --list-genres is not supported with 'both' (run each
-                            server separately). Can also be set via SERVER_TYPE env var or
-                            [general].server_type in TOML.
+                            server URLs when only one is active; 'both' syncs both servers
+                            in one pass and merges results into a single CSV with a 'server'
+                            column. Not supported with 'genres' subcommand.
   --server-url URL          Server URL — overrides the env var for the active server type
   --api-key KEY             API key — overrides the env var for the active server type
-  -n, --dry-run             Analyze only, no server updates
   -v, --verbose             Debug logging
+
+scan [library_path ...] — Scan sidecar/embedded lyrics and set ratings
+  -n, --dry-run             Analyze only, no server updates
   --report PATH             CSV report output path
   --clear                   Clear ratings from tracks whose sidecars are now clean
-  --force-rating RATING     Skip detection; set this rating on ALL tracks in the path
-  --list-genres             Print all Audio genre tags from the server, then exit
-                            (useful for building [detection.g_genres] in the config;
-                            library_path is not required)
-  --embedded-lyrics         Scan embedded lyrics tags for explicit content. On Emby,
-                            adds MediaSources to the bulk prefetch. On Jellyfin, adds
-                            one GET /Audio/{id}/Lyrics per track in scope (including
-                            sidecar-matched tracks, for --lyrics-priority resolution).
-                            (default: off)
-  --no-embedded-lyrics      Explicitly disable embedded-lyrics scanning, overriding
-                            detection.embedded_lyrics = true in the TOML config
+  --embedded-lyrics         Scan embedded lyrics tags for explicit content (default: off)
+  --no-embedded-lyrics      Explicitly disable embedded-lyrics scanning
   --lyrics-priority {sidecar,embedded,most_explicit}
-                            Which source wins when a track has both a sidecar (.lrc/.txt)
-                            and embedded lyrics. Only applies when --embedded-lyrics is on.
-                            Default: sidecar. most_explicit picks whichever detected the
-                            higher tier.
+                            Which source wins when a track has both sidecar and embedded lyrics
+
+rate library_path [library_path ...] rating — Set a fixed rating on all tracks
+  -n, --dry-run             Analyze only, no server updates
+  --report PATH             CSV report output path
+
+genres — List all Audio genre tags from the server
+  (no additional options)
 ```
+
+> **Backward compatibility:** `--force-rating RATING` and `--list-genres` still work but emit a deprecation warning. Bare paths without a subcommand are treated as `scan`.
 
 ### Configuration
 
