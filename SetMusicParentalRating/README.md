@@ -65,7 +65,7 @@ python3 SetMusicParentalRating/SetMusicParentalRating.py genres --server-type je
 
 ### CLI Reference
 
-The script uses three subcommands: **`scan`** (default), **`rate`**, and **`genres`**. Old-style invocations without a subcommand still work via automatic rewriting (e.g. bare paths imply `scan`, `--force-rating` rewrites to `rate`, `--list-genres` rewrites to `genres`).
+The script uses three subcommands: **`scan`**, **`rate`**, and **`genres`**.
 
 ```text
 SetMusicParentalRating.py {scan,rate,genres} [options]
@@ -99,7 +99,6 @@ genres — List all Audio genre tags from the server
   (no additional options)
 ```
 
-> **Backward compatibility:** `--force-rating RATING` and `--list-genres` still work but emit a deprecation warning. Bare paths without a subcommand are treated as `scan`.
 
 ### Configuration
 

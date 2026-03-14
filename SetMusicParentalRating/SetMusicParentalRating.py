@@ -1453,78 +1453,6 @@ examples:
   %(prog)s genres --server-type jellyfin
 """
 
-_SUBCOMMANDS = frozenset({"scan", "rate", "genres"})
-
-
-def _normalize_argv(argv: list[str]) -> list[str]:
-    """Insert an implicit subcommand when the user omits one (backward compat).
-
-    Also rewrites deprecated ``--force-rating VALUE`` and ``--list-genres``
-    into their subcommand equivalents with a warning.
-    """
-    if not argv:
-        return argv
-
-    # --- rewrite deprecated flags ---
-    new_argv = list(argv)
-    rewrote = False
-
-    # --list-genres → genres
-    if "--list-genres" in new_argv:
-        idx = new_argv.index("--list-genres")
-        new_argv.pop(idx)
-        new_argv.insert(0, "genres")
-        print(
-            "Warning: --list-genres is deprecated; use the 'genres' subcommand instead.",
-            file=sys.stderr,
-        )
-        return new_argv
-
-    # --force-rating VALUE → force <paths…> VALUE
-    if "--force-rating" in new_argv:
-        idx = new_argv.index("--force-rating")
-        if idx + 1 < len(new_argv):
-            rating = new_argv[idx + 1]
-            new_argv.pop(idx)  # remove --force-rating
-            new_argv.pop(idx)  # remove VALUE (now at same index)
-            # Collect positional paths (non-flag args before any --option)
-            paths: list[str] = []
-            rest: list[str] = []
-            positionals_done = False
-            for arg in new_argv:
-                if not positionals_done and not arg.startswith("-"):
-                    paths.append(arg)
-                else:
-                    positionals_done = True
-                    rest.append(arg)
-            new_argv = ["rate"] + paths + [rating] + rest
-            rewrote = True
-
-    if rewrote:
-        print(
-            "Warning: --force-rating is deprecated; use the 'rate' subcommand instead.",
-            file=sys.stderr,
-        )
-        return new_argv
-
-    # --- implicit "scan" insertion ---
-    # If the first non-flag argument is not a known subcommand, insert "scan".
-    has_positional = False
-    for arg in new_argv:
-        if arg.startswith("-"):
-            continue
-        if arg in _SUBCOMMANDS:
-            return new_argv  # already has a subcommand
-        # First positional is a path, not a subcommand
-        has_positional = True
-        break
-    if not has_positional:
-        # Only flags (like --help, --version) — let the top-level parser handle them
-        return new_argv
-    # No subcommand found — insert "scan" (no warning for bare paths, most common case)
-    new_argv.insert(0, "scan")
-    return new_argv
-
 
 def build_parser() -> argparse.ArgumentParser:
     # --- shared parent for options common to all subcommands ---
@@ -1795,7 +1723,7 @@ def print_summary(results: list[DetectionResult], label: str = "") -> None:
 
 def main() -> None:
     parser = build_parser()
-    args = parser.parse_args(_normalize_argv(sys.argv[1:]))
+    args = parser.parse_args()
 
     if not args.command:
         parser.print_help()

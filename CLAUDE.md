@@ -48,9 +48,6 @@ python3 SetMusicParentalRating/SetMusicParentalRating.py genres
 
 # Production server
 python3 SetMusicParentalRating/SetMusicParentalRating.py scan /path/to/music --env-file .env.prod --config SetMusicParentalRating/explicit_config.prod.toml
-
-# Old-style invocation still works (implicit "scan" subcommand)
-python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --dry-run
 ```
 
 ### Lint & Format
@@ -79,7 +76,7 @@ pre-commit run --all-files
 `SetMusicParentalRating.py` is a single-file script with no external dependencies — pure stdlib Python 3.11+.
 
 ### Key data flow
-1. **CLI** (`build_parser`, `_normalize_argv`): three subcommands — `scan` (default), `rate`, `genres` — with a shared parent parser for common options. `_normalize_argv` provides backward compatibility: bare paths get implicit `scan` insertion, `--force-rating` rewrites to `rate`, `--list-genres` rewrites to `genres` (both with deprecation warnings). **Config merge** (`build_config`): CLI flags > `os.environ` > `.env` file > `explicit_config.toml` > hardcoded defaults. `Config.library_paths` is a `list[Path]` — the CLI accepts multiple positional args, the TOML key `library_path` accepts both a string and an array, and the `TAGLRC_LIBRARY_PATH` env var provides a single path. Server-type resolution is two-phase: explicit `SERVER_TYPE` override wins; otherwise auto-detected from which `EMBY_URL`/`JELLYFIN_URL` vars are present (errors if both are set). `Config.__post_init__` precompiles exact-match regexes — any new config field that needs preprocessing belongs there.
+1. **CLI** (`build_parser`): three subcommands — `scan`, `rate`, `genres` — with a shared parent parser for common options (`--config`, `--env-file`, `--server-type`, `--server-url`, `--api-key`, `-v`). **Config merge** (`build_config`): CLI flags > `os.environ` > `.env` file > `explicit_config.toml` > hardcoded defaults. `Config.library_paths` is a `list[Path]` — the CLI accepts multiple positional args, the TOML key `library_path` accepts both a string and an array, and the `TAGLRC_LIBRARY_PATH` env var provides a single path. Server-type resolution is two-phase: explicit `SERVER_TYPE` override wins; otherwise auto-detected from which `EMBY_URL`/`JELLYFIN_URL` vars are present (errors if both are set). `Config.__post_init__` precompiles exact-match regexes — any new config field that needs preprocessing belongs there.
 2. **Filesystem scan** (`scan_library`): finds sidecar files, matches each to an audio file by filename stem. When multiple library paths are given, results are merged with deduplication.
 3. **LRC parsing** (`strip_lrc_tags`, `parse_sidecar`): strips timestamps/metadata to get plain text. `extract_embedded_lyrics` does the same for `MediaSources.MediaStreams[].Extradata` from server items.
 4. **Detection** (`classify_lyrics`): two-tier word detection — stem matching (substring with false-positive filter) and exact matching (word-boundary regex). R tier takes priority over PG-13.
