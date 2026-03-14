@@ -156,7 +156,7 @@ class DetectionResult:
     previous_rating: str = ""
     artist: str = ""
     album: str = ""
-    source: str = ""  # "lyrics" | "genre" | "force"
+    source: str = ""  # "lyrics" | "genre" | "force" | "reset"
     server_type: str = (
         ""  # "emby" | "jellyfin"; populated by process_library / force_rate_library
     )
@@ -431,7 +431,7 @@ def build_config(args: argparse.Namespace) -> Config:
     has_scope = getattr(args, "library", None) or getattr(args, "location", None)
     if (
         not raw_paths
-        and getattr(args, "command", None) not in ("genres",)
+        and getattr(args, "command", None) not in ("reset",)
         and not has_scope
     ):
         print(
@@ -1204,7 +1204,7 @@ def process_library(config: Config) -> list[DetectionResult]:
     """
     if not config.server_url or not config.server_api_key:
         log.error(
-            "'scan' requires a server URL and API key. "
+            "'rate' requires a server URL and API key. "
             "Add [servers.*] sections to the TOML config, "
             "or use --server-url and --api-key for a one-off run."
         )
@@ -1346,7 +1346,7 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
     library path(s), skipping tracks already at the target rating."""
     if not config.server_url or not config.server_api_key:
         log.error(
-            "'rate' requires a server URL and API key. "
+            "'force' requires a server URL and API key. "
             "Add [servers.*] sections to the TOML config, "
             "or use --server-url and --api-key for a one-off run."
         )
@@ -1419,6 +1419,63 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
             log.info("[DRY RUN] Would set %s on %s", target, norm_path)
         else:
             dr.action = _apply_rating(client, item_id, target, norm_path)
+        results.append(dr)
+
+    for r in results:
+        if not r.server_type:
+            r.server_type = config.server_type
+    return results
+
+
+def reset_library(config: Config) -> list[DetectionResult]:
+    """'reset' subcommand: remove OfficialRating from all audio tracks in scope."""
+    if not config.server_url or not config.server_api_key:
+        log.error("'reset' requires a server URL and API key.")
+        sys.exit(1)
+
+    client = MediaServerClient(
+        config.server_url, config.server_api_key, config.server_type
+    )
+    parent_id, location_path = _resolve_library_scope(
+        client,
+        config.library_name,
+        config.location_name,
+    )
+    try:
+        all_items = client.prefetch_audio_items(parent_id=parent_id)
+    except MediaServerError as exc:
+        log.error("Failed to prefetch server items: %s", exc)
+        sys.exit(1)
+    if location_path:
+        all_items = _filter_by_location(all_items, location_path)
+
+    results: list[DetectionResult] = []
+    for norm_path, item in all_items.items():
+        item_id, current, artist, album = _item_fields(item)
+        dr = DetectionResult(
+            sidecar_path=None,
+            audio_path=Path(norm_path) if norm_path else None,
+            tier=None,
+            server_item_id=item_id,
+            previous_rating=current,
+            artist=artist,
+            album=album,
+            source="reset",
+        )
+        if not item_id:
+            dr.action = "not_found_in_server"
+            log.warning("Reset: server item at %s has no 'Id'; skipping", norm_path)
+        elif not current:
+            dr.action = "skipped"
+            log.debug("No rating to clear: %s", norm_path)
+        elif config.dry_run:
+            dr.action = "dry_run_clear"
+            log.info(
+                "[DRY RUN] Would clear rating from %s (was %s)", norm_path, current
+            )
+        else:
+            action = _apply_rating(client, item_id, "", norm_path)
+            dr.action = "cleared" if action == "set" else action
         results.append(dr)
 
     for r in results:
@@ -1536,47 +1593,47 @@ def _decide_clear_action(
 # ---------------------------------------------------------------------------
 
 
-_SCAN_EXAMPLES = """\
-examples:
-  # Dry run — analyze without touching the server
-  %(prog)s /path/to/music --dry-run --report report.csv
-
-  # Multiple library paths in a single run
-  %(prog)s /path/to/music /path/to/classical --dry-run
-
-  # Clear stale ratings from tracks with clean lyrics
-  %(prog)s /path/to/music --clear
-"""
-
 _RATE_EXAMPLES = """\
 examples:
-  # Rate a known-clean library as G
-  %(prog)s /path/to/classical G
+  # Dry run — analyze without touching the server
+  %(prog)s --dry-run --report report.csv
 
-  # Dry-run rate using a named server
-  %(prog)s /path/to/classical G --server home-jellyfin --dry-run
+  # Scope to a named library
+  %(prog)s --library Music --dry-run
+
+  # Clear stale ratings from tracks with clean lyrics
+  %(prog)s --library Music --clear
 """
 
-_GENRES_EXAMPLES = """\
+_FORCE_EXAMPLES = """\
 examples:
-  # List all genre tags from the configured server
-  %(prog)s
+  # Rate a known-clean library as G
+  %(prog)s G --library Music
 
-  # List genre tags from a specific named server
-  %(prog)s --server home-jellyfin
+  # Dry-run force-rate using a named server
+  %(prog)s G --server home-jellyfin --dry-run
+"""
+
+_RESET_EXAMPLES = """\
+examples:
+  # Remove all ratings from the Music library
+  %(prog)s --library Music
+
+  # Dry run — show what would be cleared
+  %(prog)s --library Music --dry-run
 """
 
 _MAIN_EXAMPLES = """\
 subcommands:
-  scan    Fetch lyrics from server, detect explicit content, set ratings
-  rate    Set a fixed rating on all tracks under the given path(s)
-  genres  List all Audio genre tags from the server
+  rate    Fetch lyrics from server, detect explicit content, set ratings
+  force   Set a fixed rating on all tracks in scope (no lyrics evaluation)
+  reset   Remove OfficialRating from all tracks in scope
 
 examples:
-  %(prog)s scan /path/to/music --dry-run --report report.csv
-  %(prog)s scan --server home-emby --dry-run
-  %(prog)s rate /path/to/classical G
-  %(prog)s genres
+  %(prog)s rate --dry-run --report report.csv
+  %(prog)s rate --library Music --dry-run
+  %(prog)s force G --library "Classical Music"
+  %(prog)s reset --library Music --dry-run
 """
 
 
@@ -1644,79 +1701,91 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command")
 
-    # --- scan subcommand ---
-    scan_parser = subparsers.add_parser(
-        "scan",
+    # --- rate subcommand ---
+    rate_parser = subparsers.add_parser(
+        "rate",
         parents=[shared],
         help="Fetch lyrics from server, detect explicit content, set ratings",
         description="Fetch lyrics from the media server API, detect explicit "
         "content, and set OfficialRating on matching tracks.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=_SCAN_EXAMPLES,
+        epilog=_RATE_EXAMPLES,
     )
-    scan_parser.add_argument(
+    rate_parser.add_argument(
         "library_path",
         nargs="*",
         default=None,
         help="Library root directory/directories (overrides config; multiple paths supported)",
     )
-    scan_parser.add_argument(
+    rate_parser.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
         help="Analyze only — no server updates",
     )
-    scan_parser.add_argument(
+    rate_parser.add_argument(
         "--report",
         default=None,
         help="CSV report output path",
     )
-    scan_parser.add_argument(
+    rate_parser.add_argument(
         "--clear",
         action="store_true",
         help="Clear ratings from tracks with lyrics that are present and detected as clean",
     )
 
-    # --- rate subcommand ---
-    rate_parser = subparsers.add_parser(
-        "rate",
+    # --- force subcommand ---
+    force_parser = subparsers.add_parser(
+        "force",
         parents=[shared],
-        help="Set a fixed rating on all tracks under the given path(s)",
+        help="Set a fixed rating on all tracks in scope (no lyrics evaluation)",
         description="Skip detection and set a fixed OfficialRating on ALL "
-        "audio tracks under the given library path(s).",
+        "audio tracks in the configured scope.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=_RATE_EXAMPLES,
+        epilog=_FORCE_EXAMPLES,
     )
-    rate_parser.add_argument(
-        "library_path",
-        nargs="+",
-        help="Library root directory/directories",
-    )
-    rate_parser.add_argument(
+    force_parser.add_argument(
         "rating",
         help="Rating to set on all tracks (e.g. G, PG-13, R)",
     )
-    rate_parser.add_argument(
+    force_parser.add_argument(
+        "library_path",
+        nargs="*",
+        default=None,
+        help="Library root directory/directories (overrides config; multiple paths supported)",
+    )
+    force_parser.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
         help="Analyze only — no server updates",
     )
-    rate_parser.add_argument(
+    force_parser.add_argument(
         "--report",
         default=None,
         help="CSV report output path",
     )
 
-    # --- genres subcommand ---
-    subparsers.add_parser(
-        "genres",
+    # --- reset subcommand ---
+    reset_parser = subparsers.add_parser(
+        "reset",
         parents=[shared],
-        help="List all Audio genre tags from the server",
-        description="Connect to the media server, print all Audio genre tags, "
-        "then exit. Useful for populating [detection.g_genres] in the config.",
+        help="Remove OfficialRating from all tracks in scope",
+        description="Remove OfficialRating from ALL audio tracks in the "
+        "configured scope. This is a destructive operation.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=_GENRES_EXAMPLES,
+        epilog=_RESET_EXAMPLES,
+    )
+    reset_parser.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Analyze only — no server updates",
+    )
+    reset_parser.add_argument(
+        "--report",
+        default=None,
+        help="CSV report output path",
     )
 
     return parser
@@ -1822,10 +1891,6 @@ def main() -> None:
     except ValueError as exc:
         parser.error(str(exc))
 
-    if args.command == "genres":
-        list_genres_mode(config)
-        return
-
     all_results: list[DetectionResult] = []
     multi = len(config.servers) > 1
     had_failure = False
@@ -1841,28 +1906,20 @@ def main() -> None:
         if label:
             log.info("--- Processing %s ---", label)
 
-        if config.force_rating:
-            try:
-                results = force_rate_library(srv_config)
-            except SystemExit as exc:
-                log.error(
-                    "%s failed (exit %s).",
-                    label or "Server",
-                    exc.code,
-                )
-                results = []
-                had_failure = True
-        else:
-            try:
+        try:
+            if args.command == "rate":
                 results = process_library(srv_config)
-            except SystemExit as exc:
-                log.error(
-                    "%s failed (exit %s).",
-                    label or "Server",
-                    exc.code,
-                )
-                results = []
-                had_failure = True
+            elif args.command == "force":
+                results = force_rate_library(srv_config)
+            elif args.command == "reset":
+                results = reset_library(srv_config)
+            else:
+                log.error("Unknown command: %s", args.command)
+                sys.exit(1)
+        except SystemExit as exc:
+            log.error("%s failed (exit %s).", label or "Server", exc.code)
+            results = []
+            had_failure = True
 
         all_results.extend(results)
         if multi:
