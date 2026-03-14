@@ -20,6 +20,8 @@ url = "http://localhost:8097"
 
 [general]
 library_path = ""
+# overwrite = true  # Re-evaluate tracks that already have a rating (default)
+# overwrite = false  # Skip tracks that already have any rating (--skip-existing)
 
 [detection]
 

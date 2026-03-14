@@ -123,7 +123,7 @@ class Config:
         default_factory=lambda: list(DEFAULT_FALSE_POSITIVES)
     )
     dry_run: bool = False
-    clear: bool = False
+    overwrite: bool = True  # default: re-evaluate and overwrite
     force_rating: str | None = None
     report_path: Path | None = None
     g_genres: list[str] = field(default_factory=list)
@@ -472,6 +472,22 @@ def build_config(args: argparse.Namespace) -> Config:
     )
     report_path = Path(report_path_str) if report_path_str else None
 
+    # Overwrite behavior: CLI > TOML > default (True)
+    cli_overwrite = getattr(args, "overwrite", None)
+    cli_skip = getattr(args, "skip_existing", None)
+    if cli_overwrite and cli_skip:
+        print(
+            "Error: --overwrite and --skip-existing are mutually exclusive.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if cli_skip:
+        overwrite = False
+    elif cli_overwrite:
+        overwrite = True
+    else:
+        overwrite = toml.get("general", {}).get("overwrite", True)
+
     return Config(
         library_paths=library_paths,
         server_url=active.url,
@@ -483,7 +499,7 @@ def build_config(args: argparse.Namespace) -> Config:
         pg13_exact=pg13_exact,
         false_positives=false_positives,
         dry_run=getattr(args, "dry_run", False),
-        clear=getattr(args, "clear", False),
+        overwrite=overwrite,
         force_rating=getattr(args, "rating", None),
         report_path=report_path,
         g_genres=g_genres,
@@ -1284,15 +1300,20 @@ def process_library(config: Config) -> list[DetectionResult]:
                 source="lyrics",
             )
             if tier is not None:
-                dr.action = _decide_rating_action(
-                    client=client,
-                    item_id=item_id,
-                    tier=tier,
-                    current_rating=prev_rating,
-                    label=norm_path,
-                    dry_run=config.dry_run,
-                )
-            elif config.clear:
+                if not config.overwrite and prev_rating:
+                    dr.action = "skipped"
+                    log.debug("Skipping (has rating %s): %s", prev_rating, norm_path)
+                else:
+                    dr.action = _decide_rating_action(
+                        client=client,
+                        item_id=item_id,
+                        tier=tier,
+                        current_rating=prev_rating,
+                        label=norm_path,
+                        dry_run=config.dry_run,
+                    )
+            elif config.overwrite and prev_rating:
+                # Lyrics are clean but track has a rating — clear it
                 dr.action = _decide_clear_action(
                     client=client,
                     item_id=item_id,
@@ -1309,6 +1330,9 @@ def process_library(config: Config) -> list[DetectionResult]:
         if config.g_genres:
             matched_genre = match_g_genre(item, config.g_genres)
             if matched_genre is not None:
+                if not config.overwrite and prev_rating:
+                    # --skip-existing: don't override with genre-based G
+                    continue
                 dr = DetectionResult(
                     sidecar_path=None,
                     audio_path=Path(norm_path) if norm_path else None,
@@ -1411,6 +1435,9 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
             log.warning(
                 "Force-rating: server item at %s has no 'Id'; skipping", norm_path
             )
+        elif not config.overwrite and current:
+            dr.action = "skipped"
+            log.debug("Skipping (has rating %s): %s", current, norm_path)
         elif current == target:
             dr.action = "already_correct"
             log.debug("Already %s: %s", target, norm_path)
@@ -1601,8 +1628,8 @@ examples:
   # Scope to a named library
   %(prog)s --library Music --dry-run
 
-  # Clear stale ratings from tracks with clean lyrics
-  %(prog)s --library Music --clear
+  # Skip tracks that already have a rating
+  %(prog)s --library Music --skip-existing
 """
 
 _FORCE_EXAMPLES = """\
@@ -1729,9 +1756,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="CSV report output path",
     )
     rate_parser.add_argument(
-        "--clear",
+        "--overwrite",
         action="store_true",
-        help="Clear ratings from tracks with lyrics that are present and detected as clean",
+        default=None,
+        help="Re-evaluate and update tracks that already have a rating (default)",
+    )
+    rate_parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        default=None,
+        help="Skip tracks that already have any rating",
     )
 
     # --- force subcommand ---
@@ -1764,6 +1798,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--report",
         default=None,
         help="CSV report output path",
+    )
+    force_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        default=None,
+        help="Re-evaluate and update tracks that already have a rating (default)",
+    )
+    force_parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        default=None,
+        help="Skip tracks that already have any rating",
     )
 
     # --- reset subcommand ---
