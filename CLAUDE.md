@@ -32,14 +32,14 @@ Currently contains one script: `SetMusicParentalRating/SetMusicParentalRating.py
 # Run from the repo root:
 
 # Dry run — evaluate lyrics, report but don't update server
-python3 SetMusicParentalRating/SetMusicParentalRating.py rate --dry-run --report report.csv
+python3 SetMusicParentalRating/SetMusicParentalRating.py rate --library Music --dry-run --report report.csv
 
 # Scope to a specific library or location
 python3 SetMusicParentalRating/SetMusicParentalRating.py rate --library Music --dry-run
 python3 SetMusicParentalRating/SetMusicParentalRating.py rate --location classical --dry-run
 
 # Target a specific named server
-python3 SetMusicParentalRating/SetMusicParentalRating.py rate --server home-jellyfin --dry-run
+python3 SetMusicParentalRating/SetMusicParentalRating.py rate --server home-jellyfin --library Music --dry-run
 
 # Force-rate a library as G (no lyrics evaluation)
 python3 SetMusicParentalRating/SetMusicParentalRating.py force G --library "Classical Music"
@@ -48,10 +48,10 @@ python3 SetMusicParentalRating/SetMusicParentalRating.py force G --library "Clas
 python3 SetMusicParentalRating/SetMusicParentalRating.py reset --library Music --dry-run
 
 # Skip tracks that already have a rating
-python3 SetMusicParentalRating/SetMusicParentalRating.py rate --skip-existing --dry-run
+python3 SetMusicParentalRating/SetMusicParentalRating.py rate --library Music --skip-existing --dry-run
 
 # One-off server (no TOML config needed)
-python3 SetMusicParentalRating/SetMusicParentalRating.py rate --server-url http://localhost:8096 --api-key YOUR_KEY --dry-run
+python3 SetMusicParentalRating/SetMusicParentalRating.py rate --server-url http://localhost:8096 --api-key YOUR_KEY --library Music --dry-run
 
 # Production server
 python3 SetMusicParentalRating/SetMusicParentalRating.py rate --env-file .env.prod --config SetMusicParentalRating/explicit_config.prod.toml --dry-run

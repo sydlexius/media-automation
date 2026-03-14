@@ -486,7 +486,15 @@ def build_config(args: argparse.Namespace) -> Config:
     elif cli_overwrite:
         overwrite = True
     else:
-        overwrite = toml.get("general", {}).get("overwrite", True)
+        raw_overwrite = toml.get("general", {}).get("overwrite", True)
+        if not isinstance(raw_overwrite, bool):
+            print(
+                f"Error: [general].overwrite must be true or false, "
+                f"got {raw_overwrite!r}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        overwrite = raw_overwrite
 
     return Config(
         library_paths=library_paths,
@@ -967,8 +975,13 @@ class MediaServerClient:
         ``CollectionType == "music"`` are returned.
         """
         result = self._request("GET", "/Library/VirtualFolders")
-        if not result or not isinstance(result, list):
-            log.warning("discover_libraries: unexpected response: %r", type(result))
+        if result is None:
+            log.warning("discover_libraries: server returned empty body")
+            return []
+        if not isinstance(result, list):
+            log.warning(
+                "discover_libraries: unexpected response type: %r", type(result)
+            )
             return []
         music_libs = [
             lib
@@ -1383,8 +1396,7 @@ def process_library(config: Config) -> list[DetectionResult]:
 
 
 def force_rate_library(config: Config) -> list[DetectionResult]:
-    """'rate' subcommand: set a fixed rating on ALL audio tracks under the
-    library path(s), skipping tracks already at the target rating."""
+    """'force' subcommand: set a fixed rating on ALL audio tracks in scope."""
     if not config.server_url or not config.server_api_key:
         log.error(
             "'force' requires a server URL and API key. "
@@ -1697,12 +1709,12 @@ def build_parser() -> argparse.ArgumentParser:
     shared.add_argument(
         "--server-url",
         default=None,
-        help="Server URL — one-off override (use with --api-key/--server-url)",
+        help="Server URL for one-off use (requires --api-key)",
     )
     shared.add_argument(
         "--api-key",
         default=None,
-        help="API key — one-off override (use with --api-key/--server-url)",
+        help="API key for one-off use (requires --server-url)",
     )
     shared.add_argument(
         "--server",
@@ -1776,7 +1788,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite",
         action="store_true",
         default=None,
-        help="Re-evaluate and update tracks that already have a rating (default)",
+        help="Re-evaluate and update tracks that already have a rating",
     )
     rate_parser.add_argument(
         "--skip-existing",
@@ -1820,7 +1832,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite",
         action="store_true",
         default=None,
-        help="Overwrite existing ratings (default)",
+        help="Overwrite existing ratings",
     )
     force_parser.add_argument(
         "--skip-existing",
