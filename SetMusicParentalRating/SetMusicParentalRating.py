@@ -1124,7 +1124,7 @@ def _resolve_library_scope(
         lib = None
         for candidate in libraries:
             for loc_path in candidate.get("Locations") or []:
-                loc_leaf = loc_path.rstrip("/").rsplit("/", 1)[-1]
+                loc_leaf = loc_path.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
                 if loc_leaf.lower() == location_name.lower():
                     lib = candidate
                     matched_location_path = loc_path
@@ -1133,7 +1133,7 @@ def _resolve_library_scope(
                 break
         if not lib:
             all_locs = [
-                loc_path.rstrip("/").rsplit("/", 1)[-1]
+                loc_path.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
                 for candidate in libraries
                 for loc_path in candidate.get("Locations") or []
             ]
@@ -1152,7 +1152,7 @@ def _resolve_library_scope(
     if location_name and library_name:
         # Find the specific location within the matched library
         for loc_path in lib.get("Locations") or []:
-            loc_leaf = loc_path.rstrip("/").rsplit("/", 1)[-1]
+            loc_leaf = loc_path.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
             if loc_leaf.lower() == location_name.lower():
                 matched_location_path = loc_path
                 log.info(
@@ -1162,7 +1162,7 @@ def _resolve_library_scope(
                 )
                 return parent_id, matched_location_path
         locs = [
-            loc_path.rstrip("/").rsplit("/", 1)[-1]
+            loc_path.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
             for loc_path in lib.get("Locations") or []
         ]
         log.error(
@@ -1178,12 +1178,12 @@ def _resolve_library_scope(
 
 
 def _filter_by_location(items: dict[str, dict], location_path: str) -> dict[str, dict]:
-    """Post-prefetch filter: keep only items whose server Path starts with the location path."""
-    prefix = location_path.rstrip("/") + "/"
+    """Post-prefetch filter: keep only items whose normalized path starts with the location path."""
+    prefix = _normalize_path(location_path.rstrip("/\\")) + "/"
     filtered = {
         norm_path: item
         for norm_path, item in items.items()
-        if (item.get("Path") or "").startswith(prefix)
+        if norm_path.startswith(prefix)
     }
     log.info(
         "Location filter: %d / %d items under %s",
