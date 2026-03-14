@@ -199,7 +199,7 @@ Convention: `{LABEL_UPPER}_API_KEY` where label comes from TOML section name (hy
 
 ### Emby
 
-**Discovery:** `MediaStreams` in bulk prefetch response contains entries with `Type=Subtitle, Codec=lrc, IsExternal=true` for sidecar lyrics. Embedded lyrics appear in `Extradata` on audio streams.
+**Discovery:** `MediaStreams` in bulk prefetch response contains entries with `Type=Subtitle, Codec=lrc, IsExternal=true` for sidecar lyrics. Embedded lyrics appear in `Extradata` on internal subtitle streams (`IsExternal=false, Type=Subtitle`).
 
 **Precedence:** Try sidecar first (external subtitle stream), fall back to embedded (`Extradata`). Stop at first non-empty result.
 
