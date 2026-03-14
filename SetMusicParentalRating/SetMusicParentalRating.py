@@ -807,7 +807,8 @@ class MediaServerClient:
         """Fetch embedded lyrics for a Jellyfin track via GET /Audio/{item_id}/Lyrics.
 
         Returns plain lyric text (LRC timestamps stripped), or "" if the item
-        has no lyrics or the request fails. Requires no lyrics plugin.
+        has no lyrics or a non-auth request fails. Raises MediaServerError on
+        401/403 (auth/permission failures). Requires no lyrics plugin.
         """
         try:
             data = self._request("GET", f"/Audio/{item_id}/Lyrics")
@@ -1097,7 +1098,11 @@ def process_library(config: Config) -> list[DetectionResult]:
     genre allow-list check when ``config.g_genres`` is configured.
     """
     if not config.server_url or not config.server_api_key:
-        log.error("Server URL and API key are required")
+        log.error(
+            "'scan' requires a server URL and API key "
+            "(set EMBY_URL+EMBY_API_KEY or JELLYFIN_URL+JELLYFIN_API_KEY in .env, "
+            "or use --server-url/--api-key)"
+        )
         sys.exit(1)
 
     client = MediaServerClient(
@@ -1111,6 +1116,7 @@ def process_library(config: Config) -> list[DetectionResult]:
 
     # Scope to configured library paths (if provided)
     if config.library_paths:
+        _validate_library_paths(config.library_paths)
         lib_roots = [Path(_normalize_path(str(lp))) for lp in config.library_paths]
         items_in_scope = {
             path: item
