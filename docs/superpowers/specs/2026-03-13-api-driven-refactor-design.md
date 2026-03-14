@@ -232,6 +232,53 @@ Convention: `{LABEL_UPPER}_API_KEY` where label comes from TOML section name (hy
 
 ---
 
+## Implementation Strategy
+
+### PR grouping rules
+
+Not every issue needs its own PR. Group issues into PRs based on coupling:
+
+- **Same PR** when issues modify the same functions/code paths and have linear dependencies
+- **Separate PRs** when issues touch different subsystems and are independently reviewable
+- **Use Graphite** (`gt`) for stacked PRs when separate PRs have ordering dependencies
+
+### Lesson from Milestone 1
+
+Issues #32-#36 were implemented as 5 stacked PRs modifying a single file. This caused
+rebase cascades after every fix, bot reviewers couldn't see across PRs (same "dead code"
+comment filed 6 times), and squash merge didn't cascade. A single feature branch with
+one rollup PR (#55) was needed to land the work. Future milestones group tightly coupled
+issues into fewer PRs.
+
+### Milestone 2 — Server & Scoping (Layer 2)
+
+| PR | Issues | Rationale |
+|----|--------|-----------|
+| PR A | #37 + #38 | Auto-detect + named server model — both build the new server infra, same code paths |
+| PR B | #39 | Remove old `--server-type` flag — clean break, independently reviewable |
+| PR C | #40 | Library/location discovery + `--library`/`--location` scoping — new feature, own subsystem |
+| PR D | #41 | Rename subcommands (`scan`→`rate`, `rate`→`force`, add `reset`, fold `genres`) — CLI-only, independent |
+| PR E | #42 | `--overwrite`/`--skip-existing` behavior — new feature layered on top |
+
+Dependency order: A → B, A → C → D → E. PRs B and C are independent after A merges.
+
+### Milestone 3 — Configure Wizard (Layer 3)
+
+| PR | Issues | Rationale |
+|----|--------|-----------|
+| PR F | #43 | Server connection and auth wizard — foundational |
+| PR G | #44 | Library & genre discovery — builds on F |
+| PR H | #45 | Detection rules and preferences — builds on F, independent of G |
+| PR I | #46 | TUI for existing config — builds on H |
+
+Dependency order: F → G, F → H → I. PRs G and H are independent after F merges.
+
+### Bot review management
+
+- Use `/review-stack` which auto-triggers CodeRabbit and Copilot (Step 0)
+- For grouped PRs (multiple issues in one PR), bots see full context — no "dead code" noise
+- For stacked PRs (when used), Graphite handles rebase cascading via `gt stack restack`
+
 ## Issue Breakdown
 
 ### Milestone: API-Driven Lyrics (Layer 1)
