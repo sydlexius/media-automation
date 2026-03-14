@@ -34,6 +34,9 @@ Currently contains one script: `SetMusicParentalRating/SetMusicParentalRating.py
 # Dry run (analysis only, no server writes) — Emby (default)
 python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --dry-run --report report.csv
 
+# Multiple library paths in a single run
+python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music /path/to/classical --dry-run --report report.csv
+
 # Dry run against Jellyfin
 python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --server-type jellyfin --dry-run
 
@@ -70,11 +73,11 @@ pre-commit run --all-files
 `SetMusicParentalRating.py` is a single-file script with no external dependencies — pure stdlib Python 3.11+.
 
 ### Key data flow
-1. **Config merge** (`build_config`): CLI flags > `os.environ` > `.env` file > `explicit_config.toml` > hardcoded defaults. Server-type resolution is two-phase: explicit `SERVER_TYPE` override wins; otherwise auto-detected from which `EMBY_URL`/`JELLYFIN_URL` vars are present (errors if both are set). `Config.__post_init__` precompiles exact-match regexes — any new config field that needs preprocessing belongs there.
-2. **Filesystem scan** (`scan_library`): finds sidecar files, matches each to an audio file by filename stem
+1. **Config merge** (`build_config`): CLI flags > `os.environ` > `.env` file > `explicit_config.toml` > hardcoded defaults. `Config.library_paths` is a `list[Path]` — the CLI accepts multiple positional args, the TOML key `library_path` accepts both a string and an array, and the `TAGLRC_LIBRARY_PATH` env var provides a single path. Server-type resolution is two-phase: explicit `SERVER_TYPE` override wins; otherwise auto-detected from which `EMBY_URL`/`JELLYFIN_URL` vars are present (errors if both are set). `Config.__post_init__` precompiles exact-match regexes — any new config field that needs preprocessing belongs there.
+2. **Filesystem scan** (`scan_library`): finds sidecar files, matches each to an audio file by filename stem. When multiple library paths are given, results are merged with deduplication.
 3. **LRC parsing** (`strip_lrc_tags`, `parse_sidecar`): strips timestamps/metadata to get plain text. `extract_embedded_lyrics` does the same for `MediaSources.MediaStreams[].Extradata` from server items.
 4. **Detection** (`classify_lyrics`): two-tier word detection — stem matching (substring with false-positive filter) and exact matching (word-boundary regex). R tier takes priority over PG-13.
-5. **Server sync** (`process_library`): bulk prefetches all Audio items by path into `server_items: dict[str, dict]`, then runs three sequential passes, each skipping paths already in `handled_paths`. `_item_fields` extracts `(item_id, previous_rating, artist, album)` from each server item. `_decide_rating_action` / `_decide_clear_action` encapsulate the shared set/clear decision logic used across all passes.
+5. **Server sync** (`process_library`): bulk prefetches all Audio items by path into `server_items: dict[str, dict]`, then runs three sequential passes, each skipping paths already in `handled_paths`. `_validate_library_paths` checks each path is absolute, exists, and is a directory. `_is_under_roots` checks whether a normalized path falls under any of the library roots (used by embedded and genre passes to scope server items). `_item_fields` extracts `(item_id, previous_rating, artist, album)` from each server item. `_decide_rating_action` / `_decide_clear_action` encapsulate the shared set/clear decision logic used across all passes.
    - **Sidecar pass**: processes all `(sidecar, audio)` pairs from `scan_library`; adds each audio path to `handled_paths`. When `config.embedded_lyrics` is on, each sidecar-pass item also checks the server item for embedded lyrics and calls `_resolve_priority` to pick the winning source — see `lyrics_priority` below.
    - **Embedded pass** (only when `config.embedded_lyrics`): for Emby, reads `Extradata` from prefetched `MediaSources`; for Jellyfin, calls `GET /Audio/{itemId}/Lyrics` per track. Adds matched paths to `handled_paths`
    - **Genre pass** (only when `config.g_genres`): assigns `G` to items not yet in `handled_paths` whose `Genres` list overlaps the allow-list

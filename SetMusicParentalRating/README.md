@@ -8,7 +8,7 @@ Scans sidecar lyric files (`.lrc`, `.txt`) for explicit content and sets `Offici
 
 ### How It Works
 
-1. Recursively finds `.lrc` and `.txt` sidecar files under a music library path
+1. Recursively finds `.lrc` and `.txt` sidecar files under one or more music library paths
 2. Matches each sidecar to its audio file by filename stem
 3. Strips LRC timestamps/metadata to extract plain lyric text
 4. Runs tiered word detection against configurable word lists:
@@ -40,6 +40,9 @@ cp .env.example .env
 # 2. Dry run — analyze without touching the server (default)
 python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --dry-run --report report.csv
 
+# 2b. Multiple library paths in a single run
+python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music /path/to/classical --dry-run --report report.csv
+
 # 3. Dry run against Jellyfin
 python3 SetMusicParentalRating/SetMusicParentalRating.py /path/to/music --server-type jellyfin --dry-run
 
@@ -63,10 +66,10 @@ python3 SetMusicParentalRating/SetMusicParentalRating.py --server-type jellyfin 
 ### CLI Reference
 
 ```text
-SetMusicParentalRating.py [library_path] [options]
+SetMusicParentalRating.py [library_path ...] [options]
 
 Positional:
-  library_path              Library root (overrides config)
+  library_path              Library root(s) — one or more paths (overrides config)
 
 Options:
   --version                 Show program version and exit
@@ -127,7 +130,7 @@ SERVER_TYPE=both   # or 'emby' / 'jellyfin'; override per-run with --server-type
 # Exported env vars still take precedence over .env
 ```
 
-**`explicit_config.toml`** — word lists, library path, report output, and genre allow-list. Copy `explicit_config.example.toml` to get started. The script works without any config file using sensible defaults.
+**`explicit_config.toml`** — word lists, library path(s), report output, and genre allow-list. Copy `explicit_config.example.toml` to get started. The `library_path` key accepts both a single string and a TOML array of strings (e.g. `library_path = ["/music", "/classical"]`). The script works without any config file using sensible defaults.
 
 **`[detection]`** — top-level detection settings:
 

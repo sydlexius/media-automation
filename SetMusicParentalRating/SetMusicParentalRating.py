@@ -116,7 +116,7 @@ class MediaServerError(Exception):
 
 @dataclass
 class Config:
-    library_path: Path
+    library_paths: list[Path]
     server_url: str  # "" in "both" mode; use emby_url/jellyfin_url instead
     server_api_key: str  # "" in "both" mode; use emby_api_key/jellyfin_api_key instead
     server_type: str = "emby"
@@ -265,14 +265,25 @@ def build_config(args: argparse.Namespace) -> Config:
         env_path = script_dir.parent / ".env"
     env_file = load_env(env_path, required=bool(args.env_file))
 
-    # --- library_path ---
-    library_path_str = (
-        args.library_path
-        or os.environ.get("TAGLRC_LIBRARY_PATH")
-        or env_file.get("TAGLRC_LIBRARY_PATH")
-        or toml.get("general", {}).get("library_path")
-    )
-    if not library_path_str and not getattr(args, "list_genres", False):
+    # --- library_paths (multi-path support) ---
+    # CLI provides a list (nargs="*"); env var and TOML provide a single string or list.
+    raw_paths: list[str] = []
+    if args.library_path:
+        raw_paths = args.library_path
+    else:
+        env_lp = os.environ.get("TAGLRC_LIBRARY_PATH") or env_file.get(
+            "TAGLRC_LIBRARY_PATH"
+        )
+        if env_lp:
+            raw_paths = [env_lp]
+        else:
+            toml_lp = toml.get("general", {}).get("library_path")
+            if isinstance(toml_lp, list):
+                raw_paths = [p for p in toml_lp if p]
+            elif toml_lp:
+                raw_paths = [toml_lp]
+
+    if not raw_paths and not getattr(args, "list_genres", False):
         print(
             "Error: library_path is required. Provide it via command-line argument, "
             "TAGLRC_LIBRARY_PATH environment variable, or [general].library_path in the TOML config.",
@@ -280,12 +291,10 @@ def build_config(args: argparse.Namespace) -> Config:
         )
         sys.exit(1)
     try:
-        library_path = (
-            Path(library_path_str).expanduser() if library_path_str else Path(".")
-        )
-    except RuntimeError as exc:
+        library_paths = [Path(p).expanduser() for p in raw_paths] if raw_paths else []
+    except (RuntimeError, TypeError) as exc:
         print(
-            f"Error: cannot expand library_path {library_path_str!r}: {exc}",
+            f"Error: cannot expand library_path: {exc}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -390,7 +399,7 @@ def build_config(args: argparse.Namespace) -> Config:
     report_path = Path(report_path_str) if report_path_str else None
 
     return Config(
-        library_path=library_path,
+        library_paths=library_paths,
         server_url=server_url.rstrip("/"),
         server_api_key=server_api_key,
         server_type=server_type,
@@ -858,17 +867,20 @@ def _item_fields(item: dict) -> tuple[str | None, str, str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _path_parts(audio_path: Path | None, library_path: Path | None) -> tuple[str, str]:
-    """Best-effort fallback using the path relative to the library root."""
+def _path_parts(
+    audio_path: Path | None, library_paths: list[Path] | None
+) -> tuple[str, str]:
+    """Best-effort fallback using the path relative to a library root."""
     if audio_path is None:
         return "", ""
-    if library_path is not None:
-        try:
-            parts = audio_path.relative_to(library_path).parts
-        except ValueError:
-            parts = audio_path.parts
-    else:
-        parts = audio_path.parts
+    parts = audio_path.parts
+    if library_paths:
+        for lp in library_paths:
+            try:
+                parts = audio_path.relative_to(lp).parts
+                break
+            except ValueError:
+                continue
     # Artist/Album/Track (3+ segments) → (artist, album)
     if len(parts) >= 3:
         return parts[-3], parts[-2]
@@ -879,7 +891,9 @@ def _path_parts(audio_path: Path | None, library_path: Path | None) -> tuple[str
 
 
 def write_report(
-    results: list[DetectionResult], path: Path, library_path: Path | None = None
+    results: list[DetectionResult],
+    path: Path,
+    library_paths: list[Path] | None = None,
 ) -> None:
     """Write detection results to a CSV file."""
     try:
@@ -902,7 +916,7 @@ def write_report(
                 ]
             )
             for r in results:
-                path_artist, path_album = _path_parts(r.audio_path, library_path)
+                path_artist, path_album = _path_parts(r.audio_path, library_paths)
                 artist = r.artist or path_artist
                 album = r.album or path_album
                 track = (r.audio_path or r.sidecar_path or Path()).name
@@ -932,6 +946,26 @@ def write_report(
 # ---------------------------------------------------------------------------
 
 
+def _validate_library_paths(paths: list[Path]) -> None:
+    """Validate that every library path is absolute, exists, and is a directory."""
+    for lp in paths:
+        if not lp.is_absolute():
+            log.error("library_path must be an absolute path; got %r", str(lp))
+            sys.exit(1)
+        if not lp.exists():
+            log.error("library_path does not exist: %s", lp)
+            sys.exit(1)
+        if not lp.is_dir():
+            log.error("library_path is not a directory: %s", lp)
+            sys.exit(1)
+
+
+def _is_under_roots(norm_path: str, lib_roots: list[Path]) -> bool:
+    """Return True if *norm_path* falls under any of the library roots."""
+    p = Path(norm_path)
+    return any(p.is_relative_to(r) for r in lib_roots)
+
+
 def process_library(config: Config) -> list[DetectionResult]:
     """Main flow: scan sidecars -> detect -> update media server.
 
@@ -940,17 +974,15 @@ def process_library(config: Config) -> list[DetectionResult]:
     parallelism is added (e.g. concurrent Jellyfin lyrics fetches), these
     would need locking or per-thread accumulation.
     """
-    lp = config.library_path
-    if not lp.is_absolute():
-        log.error("library_path must be an absolute path; got %r", str(lp))
-        sys.exit(1)
-    if not lp.exists():
-        log.error("library_path does not exist: %s", lp)
-        sys.exit(1)
-    if not lp.is_dir():
-        log.error("library_path is not a directory: %s", lp)
-        sys.exit(1)
-    pairs = scan_library(config.library_path)
+    _validate_library_paths(config.library_paths)
+
+    pairs: list[tuple[Path, Path | None]] = []
+    seen: set[Path] = set()
+    for lp in config.library_paths:
+        for pair in scan_library(lp):
+            if pair[0] not in seen:
+                seen.add(pair[0])
+                pairs.append(pair)
 
     # Prefetch server items for path matching (even in dry-run, we read but don't write)
     client: MediaServerClient | None = None
@@ -1055,7 +1087,7 @@ def process_library(config: Config) -> list[DetectionResult]:
         results.append(dr)
 
     # Compute once — shared by embedded and genre passes
-    lib_root = Path(_normalize_path(str(config.library_path)))
+    lib_roots = [Path(_normalize_path(str(lp))) for lp in config.library_paths]
 
     # --- Embedded lyrics pass ---
     if config.embedded_lyrics and client is not None:
@@ -1063,7 +1095,7 @@ def process_library(config: Config) -> list[DetectionResult]:
             candidate_count = sum(
                 1
                 for p in server_items
-                if p not in handled_paths and Path(p).is_relative_to(lib_root)
+                if p not in handled_paths and _is_under_roots(p, lib_roots)
             )
             if candidate_count:
                 log.info(
@@ -1074,7 +1106,7 @@ def process_library(config: Config) -> list[DetectionResult]:
         for norm_path, item in server_items.items():
             if norm_path in handled_paths:
                 continue
-            if not Path(norm_path).is_relative_to(lib_root):
+            if not _is_under_roots(norm_path, lib_roots):
                 continue
             if config.server_type == "jellyfin":
                 _iid = item.get("Id", "")
@@ -1137,7 +1169,7 @@ def process_library(config: Config) -> list[DetectionResult]:
         for norm_path, item in server_items.items():
             if norm_path in handled_paths:
                 continue
-            if not Path(norm_path).is_relative_to(lib_root):
+            if not _is_under_roots(norm_path, lib_roots):
                 continue
             matched_genre = match_g_genre(item, config.g_genres)
             if matched_genre is None:
@@ -1189,12 +1221,8 @@ def process_library(config: Config) -> list[DetectionResult]:
 
 def force_rate_library(config: Config) -> list[DetectionResult]:
     """--force-rating mode: set a fixed rating on ALL audio tracks under the
-    library path, skipping tracks already at the target rating."""
-    if not config.library_path.is_absolute():
-        log.error(
-            "library_path must be an absolute path; got %r", str(config.library_path)
-        )
-        sys.exit(1)
+    library path(s), skipping tracks already at the target rating."""
+    _validate_library_paths(config.library_paths)
     if not config.server_url or not config.server_api_key:
         log.error(
             "--force-rating requires a server URL and API key "
@@ -1212,17 +1240,18 @@ def force_rate_library(config: Config) -> list[DetectionResult]:
         log.error("Failed to prefetch server items: %s", exc)
         sys.exit(1)
 
-    # Filter to items under the library path (path-aware, avoids /music matching /music2)
-    lib_root = Path(_normalize_path(str(config.library_path)))
+    # Filter to items under the library path(s) (path-aware, avoids /music matching /music2)
+    lib_roots = [Path(_normalize_path(str(lp))) for lp in config.library_paths]
     items_in_scope = {
         path: item
         for path, item in all_items.items()
-        if Path(path).is_relative_to(lib_root)
+        if _is_under_roots(path, lib_roots)
     }
+    paths_display = ", ".join(str(lp) for lp in config.library_paths)
     log.info(
         "Force-rating: %d items under %s (of %d total)",
         len(items_in_scope),
-        config.library_path,
+        paths_display,
         len(all_items),
     )
 
@@ -1387,9 +1416,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "library_path",
-        nargs="?",
+        nargs="*",
         default=None,
-        help="Library root directory (overrides config)",
+        help="Library root directory/directories (overrides config; multiple paths supported)",
     )
     parser.add_argument(
         "--config",
@@ -1660,7 +1689,7 @@ def main() -> None:
                 jf_results = []
         results = emby_results + jf_results
         if config.report_path:
-            write_report(results, config.report_path, config.library_path)
+            write_report(results, config.report_path, config.library_paths)
         print_summary(emby_results, label="Emby")
         print_summary(jf_results, label="Jellyfin")
     else:
@@ -1669,7 +1698,7 @@ def main() -> None:
         else:
             results = process_library(config)
         if config.report_path:
-            write_report(results, config.report_path, config.library_path)
+            write_report(results, config.report_path, config.library_paths)
         print_summary(results)
 
 

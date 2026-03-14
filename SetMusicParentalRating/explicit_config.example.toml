@@ -13,9 +13,10 @@
 
 [general]
 # server_type = "emby"   # Uncomment to force "emby", "jellyfin", or "both"; leave unset to auto-detect
-# A single library path. To scan multiple libraries, run the script once per
-# library or use a wrapper script. The library_path can also be passed as the
-# first positional CLI argument or via TAGLRC_LIBRARY_PATH env var.
+# Library path(s) to scan. Accepts a single string or a TOML array of strings.
+# Can also be passed as positional CLI argument(s) or via TAGLRC_LIBRARY_PATH env var.
+#   library_path = "/mnt/d/Music"
+#   library_path = ["/mnt/d/Music", "/mnt/d/Classical"]
 library_path = ""
 
 [emby]
