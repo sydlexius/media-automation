@@ -247,13 +247,22 @@ def detect_server_type(url: str) -> str:
             server_header = resp.headers.get("Server", "")
             try:
                 data = json.loads(resp.read())
-                if data.get("ProductName") == "Jellyfin Server":
+                product = data.get("ProductName")
+                if product == "Jellyfin Server":
                     log.info("Auto-detected Jellyfin at %s", clean_url)
                     return "jellyfin"
-                log.info("Auto-detected Emby at %s", clean_url)
-                return "emby"
-            except (json.JSONDecodeError, AttributeError):
-                pass
+                if product:
+                    log.info(
+                        "Auto-detected Emby at %s (ProductName=%s)", clean_url, product
+                    )
+                    return "emby"
+                # ProductName missing/null — fall through to header check
+            except (json.JSONDecodeError, AttributeError) as exc:
+                log.warning(
+                    "Could not parse JSON from %s (falling back to Server header): %s",
+                    endpoint,
+                    exc,
+                )
             # Fallback: Server header
             if "Kestrel" in server_header:
                 log.info("Auto-detected Jellyfin (via Server header) at %s", clean_url)
@@ -286,7 +295,14 @@ def _resolve_servers(
 
     # --- 1. CLI one-off override ---
     if cli_server_url and cli_api_key:
-        server_type = detect_server_type(cli_server_url)
+        try:
+            server_type = detect_server_type(cli_server_url)
+        except MediaServerError as exc:
+            print(
+                f"Error: cannot auto-detect server type at {cli_server_url}: {exc}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         return [
             ServerConfig(
                 name="cli",
@@ -305,10 +321,31 @@ def _resolve_servers(
     # --- 2. TOML [servers.*] sections ---
     toml_servers = toml.get("servers", {})
     if toml_servers and isinstance(toml_servers, dict):
+        # Apply --server filter early so we only resolve selected servers
+        selected = getattr(args, "server", None) or []
+        if selected:
+            unknown = [s for s in selected if s not in toml_servers]
+            if unknown:
+                avail = ", ".join(sorted(toml_servers.keys()))
+                print(
+                    f"Error: unknown server(s): {', '.join(unknown)}. "
+                    f"Available: {avail}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            entries = {k: v for k, v in toml_servers.items() if k in selected}
+        else:
+            entries = {k: v for k, v in toml_servers.items() if isinstance(v, dict)}
         servers: list[ServerConfig] = []
-        for name, srv_conf in toml_servers.items():
+        for name, srv_conf in entries.items():
             if not isinstance(srv_conf, dict):
-                continue
+                print(
+                    f"Error: server '{name}' in config must be a table/section "
+                    f"(got {type(srv_conf).__name__}). "
+                    f'Use [servers.{name}] with url = "..." instead.',
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             url = str(srv_conf.get("url", "")).strip()
             if not url:
                 print(
@@ -340,7 +377,15 @@ def _resolve_servers(
                     sys.exit(1)
                 server_type = explicit_type
             else:
-                server_type = detect_server_type(url)
+                try:
+                    server_type = detect_server_type(url)
+                except MediaServerError as exc:
+                    print(
+                        f"Error: cannot auto-detect server type for '{name}' "
+                        f"at {url}: {exc}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
             servers.append(
                 ServerConfig(
                     name=name,
@@ -521,25 +566,12 @@ def build_config(args: argparse.Namespace) -> Config:
         )
         sys.exit(1)
 
-    # --- Resolve servers ---
+    # --- Resolve servers (--server filtering applied inside) ---
     servers = _resolve_servers(args, toml, env_file)
 
-    # --- Filter by --server NAME (if specified) ---
-    selected = getattr(args, "server", None) or []
-    if selected:
-        known = {s.name for s in servers}
-        for name in selected:
-            if name not in known:
-                avail = ", ".join(sorted(known))
-                print(
-                    f"Error: unknown server '{name}'. Available: {avail}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-        servers = [s for s in servers if s.name in selected]
-
-    # Backward-compat: set server_url/api_key/type from first resolved server
-    active = servers[0] if servers else ServerConfig("", "", "", "emby")
+    # Set server_url/api_key/type from first resolved server
+    # _resolve_servers always returns non-empty or calls sys.exit
+    active = servers[0]
 
     # --- word lists (TOML or defaults) ---
     det = toml.get("detection", {})
@@ -1523,12 +1555,12 @@ def build_parser() -> argparse.ArgumentParser:
     shared.add_argument(
         "--server-url",
         default=None,
-        help="Server URL — overrides the env var for the active server type",
+        help="Server URL — one-off override (use with --api-key/--server-url)",
     )
     shared.add_argument(
         "--api-key",
         default=None,
-        help="API key — overrides the env var for the active server type",
+        help="API key — one-off override (use with --api-key/--server-url)",
     )
     shared.add_argument(
         "--server",
@@ -1743,6 +1775,7 @@ def main() -> None:
 
     all_results: list[DetectionResult] = []
     multi = len(config.servers) > 1
+    had_failure = False
 
     for server in config.servers:
         srv_config = replace(
@@ -1765,6 +1798,7 @@ def main() -> None:
                     exc.code,
                 )
                 results = []
+                had_failure = True
         else:
             try:
                 results = process_library(srv_config)
@@ -1775,6 +1809,7 @@ def main() -> None:
                     exc.code,
                 )
                 results = []
+                had_failure = True
 
         all_results.extend(results)
         if multi:
@@ -1785,6 +1820,9 @@ def main() -> None:
 
     if not multi:
         print_summary(all_results)
+
+    if had_failure:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
