@@ -1139,6 +1139,7 @@ def process_library(config: Config) -> list[DetectionResult]:
     for norm_path, item in items_in_scope.items():
         item_id, prev_rating, artist, album = _item_fields(item)
         if not item_id:
+            log.warning("Server item at %s has no 'Id'; skipping", norm_path)
             continue
 
         # Try lyrics
