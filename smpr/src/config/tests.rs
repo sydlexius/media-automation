@@ -667,3 +667,32 @@ url = "http://beta:8096"
         std::env::remove_var("ALPHA_API_KEY");
     }
 }
+
+#[test]
+fn config_error_source_toml() {
+    let toml_err = toml::from_str::<toml::Value>("{{invalid").unwrap_err();
+    let err = super::ConfigError::TomlParse(toml_err);
+    assert!(
+        std::error::Error::source(&err).is_some(),
+        "TomlParse should return source"
+    );
+}
+
+#[test]
+fn config_error_source_io() {
+    let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "test");
+    let err = super::ConfigError::Io(io_err);
+    assert!(
+        std::error::Error::source(&err).is_some(),
+        "Io should return source"
+    );
+}
+
+#[test]
+fn config_error_source_none_for_others() {
+    let err = super::ConfigError::NoServers;
+    assert!(
+        std::error::Error::source(&err).is_none(),
+        "NoServers should return None"
+    );
+}
