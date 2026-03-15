@@ -15,6 +15,7 @@ clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 csv = "1"
 dotenvy = "0.15"
+log = "0.4.29"
 ratatui = "0.30"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
