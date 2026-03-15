@@ -1,3 +1,4 @@
+#[expect(dead_code, reason = "wired in Task 6")]
 mod config;
 mod detection;
 mod rating;

@@ -3,12 +3,12 @@ mod defaults;
 mod tests;
 
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct RawConfig {
-    pub servers: Option<HashMap<String, RawServerConfig>>,
+    pub servers: Option<BTreeMap<String, RawServerConfig>>,
     pub detection: Option<RawDetection>,
     pub general: Option<RawGeneral>,
     pub report: Option<RawReport>,
@@ -19,13 +19,13 @@ pub struct RawServerConfig {
     pub url: Option<String>,
     #[serde(rename = "type")]
     pub server_type: Option<String>,
-    pub libraries: Option<HashMap<String, RawLibraryConfig>>,
+    pub libraries: Option<BTreeMap<String, RawLibraryConfig>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RawLibraryConfig {
     pub force_rating: Option<String>,
-    pub locations: Option<HashMap<String, RawLocationConfig>>,
+    pub locations: Option<BTreeMap<String, RawLocationConfig>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,7 +92,7 @@ pub struct ServerConfig {
     pub url: String,
     pub api_key: String,
     pub server_type: Option<ServerType>,
-    pub libraries: HashMap<String, LibraryConfig>,
+    pub libraries: BTreeMap<String, LibraryConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,7 +104,7 @@ pub enum ServerType {
 #[derive(Debug)]
 pub struct LibraryConfig {
     pub force_rating: Option<String>,
-    pub locations: HashMap<String, LocationConfig>,
+    pub locations: BTreeMap<String, LocationConfig>,
 }
 
 #[derive(Debug)]
@@ -136,8 +136,10 @@ pub enum ConfigError {
     MissingApiKey(String),
     /// Invalid `type` value (must be "emby" or "jellyfin").
     InvalidServerType { server: String, value: String },
+    /// .env file explicitly specified but could not be loaded.
+    EnvFile(String),
     /// `--server` filter names a server not present in config.
-    UnknownServerFilter(String),
+    UnknownServerFilter { requested: String, available: Vec<String> },
     /// No servers configured (neither TOML nor one-off CLI).
     NoServers,
 }
@@ -156,8 +158,9 @@ impl std::fmt::Display for ConfigError {
             Self::InvalidServerType { server, value } => {
                 write!(f, "invalid server type '{value}' for server '{server}' (expected 'emby' or 'jellyfin')")
             }
-            Self::UnknownServerFilter(name) => {
-                write!(f, "unknown server '{name}' in --server filter")
+            Self::EnvFile(msg) => write!(f, "env file error: {msg}"),
+            Self::UnknownServerFilter { requested, available } => {
+                write!(f, "unknown server '{requested}' in --server filter. Available: {}", available.join(", "))
             }
             Self::NoServers => write!(f, "no servers configured"),
         }
@@ -191,15 +194,24 @@ pub struct CliInput {
 impl Config {
     /// Build a fully resolved `Config` from TOML file, .env file, and CLI flags.
     pub fn load_from_paths(cli: &CliInput) -> Result<Config, ConfigError> {
-        // 1. Parse TOML (use defaults if file doesn't exist)
+        // 1. Parse TOML
         let raw = match &cli.config_path {
-            Some(path) => read_toml(path)?,
-            None => RawConfig::default(),
+            Some(path) => {
+                // User explicitly specified --config; missing file is an error
+                let content = std::fs::read_to_string(path)
+                    .map_err(ConfigError::Io)?;
+                parse_toml(&content).map_err(ConfigError::TomlParse)?
+            }
+            None => {
+                // No --config; try default path, warn if missing
+                RawConfig::default()
+            }
         };
 
-        // 2. Load .env file (ignore errors — file may not exist)
+        // 2. Load .env file (explicit path must succeed)
         if let Some(env_path) = &cli.env_file {
-            let _ = dotenvy::from_path(env_path);
+            dotenvy::from_path(env_path)
+                .map_err(|e| ConfigError::EnvFile(format!("{}: {e}", env_path.display())))?;
         }
 
         // 3. Resolve servers
@@ -242,14 +254,6 @@ impl Config {
     }
 }
 
-fn read_toml(path: &Path) -> Result<RawConfig, ConfigError> {
-    match std::fs::read_to_string(path) {
-        Ok(content) => parse_toml(&content).map_err(ConfigError::TomlParse),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(RawConfig::default()),
-        Err(e) => Err(ConfigError::Io(e)),
-    }
-}
-
 fn resolve_servers(raw: &RawConfig, cli: &CliInput) -> Result<Vec<ServerConfig>, ConfigError> {
     // One-off mode: --server-url + --api-key
     if let (Some(url), Some(key)) = (&cli.server_url, &cli.api_key) {
@@ -258,7 +262,7 @@ fn resolve_servers(raw: &RawConfig, cli: &CliInput) -> Result<Vec<ServerConfig>,
             url: url.clone(),
             api_key: key.clone(),
             server_type: None,
-            libraries: HashMap::new(),
+            libraries: BTreeMap::new(),
         }]);
     }
 
@@ -301,9 +305,13 @@ fn resolve_servers(raw: &RawConfig, cli: &CliInput) -> Result<Vec<ServerConfig>,
 
     // Apply --server filter
     if let Some(filter) = &cli.server_filter {
+        let available: Vec<String> = servers.iter().map(|s| s.name.clone()).collect();
         for name in filter {
             if !servers.iter().any(|s| s.name == *name) {
-                return Err(ConfigError::UnknownServerFilter(name.clone()));
+                return Err(ConfigError::UnknownServerFilter {
+                    requested: name.clone(),
+                    available,
+                });
             }
         }
         servers.retain(|s| filter.contains(&s.name));
@@ -327,9 +335,9 @@ fn parse_server_type(label: &str, value: &str) -> Result<ServerType, ConfigError
     }
 }
 
-fn resolve_libraries(raw_srv: &RawServerConfig) -> HashMap<String, LibraryConfig> {
+fn resolve_libraries(raw_srv: &RawServerConfig) -> BTreeMap<String, LibraryConfig> {
     let Some(raw_libs) = &raw_srv.libraries else {
-        return HashMap::new();
+        return BTreeMap::new();
     };
 
     raw_libs
@@ -369,43 +377,23 @@ fn to_owned_vec(defaults: &[&str]) -> Vec<String> {
 
 fn resolve_detection(raw: &RawConfig) -> DetectionConfig {
     let det = raw.detection.as_ref();
-
-    let r_stems = det
-        .and_then(|d| d.r.as_ref())
-        .and_then(|w| w.stems.clone())
-        .unwrap_or_else(|| to_owned_vec(defaults::R_STEMS));
-
-    let r_exact = det
-        .and_then(|d| d.r.as_ref())
-        .and_then(|w| w.exact.clone())
-        .unwrap_or_else(|| to_owned_vec(defaults::R_EXACT));
-
-    let pg13_stems = det
-        .and_then(|d| d.pg13.as_ref())
-        .and_then(|w| w.stems.clone())
-        .unwrap_or_else(|| to_owned_vec(defaults::PG13_STEMS));
-
-    let pg13_exact = det
-        .and_then(|d| d.pg13.as_ref())
-        .and_then(|w| w.exact.clone())
-        .unwrap_or_else(|| to_owned_vec(defaults::PG13_EXACT));
-
-    let false_positives = det
-        .and_then(|d| d.ignore.as_ref())
-        .and_then(|i| i.false_positives.clone())
-        .unwrap_or_else(|| to_owned_vec(defaults::FALSE_POSITIVES));
-
-    let g_genres = det
-        .and_then(|d| d.g_genres.as_ref())
-        .and_then(|g| g.genres.clone())
-        .unwrap_or_default();
+    let r = det.and_then(|d| d.r.as_ref());
+    let pg13 = det.and_then(|d| d.pg13.as_ref());
 
     DetectionConfig {
-        r_stems,
-        r_exact,
-        pg13_stems,
-        pg13_exact,
-        false_positives,
-        g_genres,
+        r_stems: r.and_then(|w| w.stems.clone())
+            .unwrap_or_else(|| to_owned_vec(defaults::R_STEMS)),
+        r_exact: r.and_then(|w| w.exact.clone())
+            .unwrap_or_else(|| to_owned_vec(defaults::R_EXACT)),
+        pg13_stems: pg13.and_then(|w| w.stems.clone())
+            .unwrap_or_else(|| to_owned_vec(defaults::PG13_STEMS)),
+        pg13_exact: pg13.and_then(|w| w.exact.clone())
+            .unwrap_or_else(|| to_owned_vec(defaults::PG13_EXACT)),
+        false_positives: det.and_then(|d| d.ignore.as_ref())
+            .and_then(|i| i.false_positives.clone())
+            .unwrap_or_else(|| to_owned_vec(defaults::FALSE_POSITIVES)),
+        g_genres: det.and_then(|d| d.g_genres.as_ref())
+            .and_then(|g| g.genres.clone())
+            .unwrap_or_default(),
     }
 }

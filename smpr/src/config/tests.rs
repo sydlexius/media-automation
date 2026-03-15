@@ -363,6 +363,10 @@ url = "http://localhost:8096"
         msg.contains("unknown server") && msg.contains("nonexistent"),
         "expected unknown server filter error, got: {msg}"
     );
+    assert!(
+        msg.contains("real-server"),
+        "expected available servers to be listed, got: {msg}"
+    );
 
     unsafe { std::env::remove_var("REAL_SERVER_API_KEY"); }
 }
@@ -463,13 +467,13 @@ fn overwrite_default_when_toml_omits() {
 #[test]
 fn missing_toml_file_uses_defaults() {
     let cli = CliInput {
-        config_path: Some(PathBuf::from("/tmp/nonexistent_smpr_config_12345.toml")),
+        config_path: None,
         server_url: Some("http://localhost:8096".to_string()),
         api_key: Some("key".to_string()),
         ..Default::default()
     };
 
-    let cfg = Config::load_from_paths(&cli).expect("missing TOML should use defaults");
+    let cfg = Config::load_from_paths(&cli).expect("no config path should use defaults");
 
     // Detection defaults
     assert_eq!(
@@ -481,6 +485,41 @@ fn missing_toml_file_uses_defaults() {
         defaults::PG13_STEMS.iter().map(|s| s.to_string()).collect::<Vec<_>>()
     );
     assert!(cfg.overwrite); // default
+}
+
+#[test]
+fn error_explicit_config_not_found() {
+    let cli = CliInput {
+        config_path: Some(PathBuf::from("/tmp/nonexistent_smpr_config_12345.toml")),
+        server_url: Some("http://localhost:8096".to_string()),
+        api_key: Some("key".to_string()),
+        ..Default::default()
+    };
+
+    let err = Config::load_from_paths(&cli).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("IO error"),
+        "expected IO error for missing explicit config, got: {msg}"
+    );
+}
+
+#[test]
+fn error_env_file_not_found() {
+    let cli = CliInput {
+        config_path: None,
+        env_file: Some(PathBuf::from("/tmp/nonexistent_smpr_env_12345.env")),
+        server_url: Some("http://localhost:8096".to_string()),
+        api_key: Some("key".to_string()),
+        ..Default::default()
+    };
+
+    let err = Config::load_from_paths(&cli).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("env file error"),
+        "expected env file error for missing explicit env file, got: {msg}"
+    );
 }
 
 #[test]
