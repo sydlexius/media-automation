@@ -1,5 +1,9 @@
 use crate::config::DetectionConfig;
 use regex::Regex;
+use std::sync::LazyLock;
+
+#[allow(dead_code)]
+static WORD_TOKENIZER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-z']+").unwrap());
 
 #[allow(dead_code)]
 pub struct DetectionEngine {
@@ -49,6 +53,17 @@ fn detect_exact(text: &str, patterns: &[(String, Regex)]) -> Vec<String> {
         .collect()
 }
 
+#[allow(dead_code)]
+fn dedup_matched(stem_hits: Vec<String>, exact_hits: Vec<String>) -> Vec<String> {
+    let mut result = stem_hits;
+    for word in exact_hits {
+        if !result.contains(&word) {
+            result.push(word);
+        }
+    }
+    result
+}
+
 impl DetectionEngine {
     #[allow(dead_code)]
     pub fn new(config: &DetectionConfig) -> Self {
@@ -64,6 +79,38 @@ impl DetectionEngine {
                 .collect(),
             g_genres: config.g_genres.iter().map(|s| s.to_lowercase()).collect(),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn classify_lyrics(&self, text: &str) -> (Option<&'static str>, Vec<String>) {
+        if text.trim().is_empty() {
+            return (None, vec![]);
+        }
+
+        let lowered = text.to_lowercase();
+        let word_tokens: Vec<&str> = WORD_TOKENIZER
+            .find_iter(&lowered)
+            .map(|m| m.as_str())
+            .collect();
+
+        // Check R tier first
+        let r_stem_hits = detect_stems(&word_tokens, &self.r_stems, &self.false_positives);
+        let r_exact_hits = detect_exact(text, &self.r_exact_patterns);
+        if !r_stem_hits.is_empty() || !r_exact_hits.is_empty() {
+            return (Some("R"), dedup_matched(r_stem_hits, r_exact_hits));
+        }
+
+        // Then PG-13
+        let pg13_stem_hits = detect_stems(&word_tokens, &self.pg13_stems, &self.false_positives);
+        let pg13_exact_hits = detect_exact(text, &self.pg13_exact_patterns);
+        if !pg13_stem_hits.is_empty() || !pg13_exact_hits.is_empty() {
+            return (
+                Some("PG-13"),
+                dedup_matched(pg13_stem_hits, pg13_exact_hits),
+            );
+        }
+
+        (None, vec![])
     }
 }
 
@@ -170,6 +217,95 @@ mod tests {
         let patterns = compile_exact_patterns(&vec!["blowjob".into()]);
         let result = detect_exact("clean text here", &patterns);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn classify_r_tier() {
+        let engine = DetectionEngine::new(&test_config());
+        let (tier, words) = engine.classify_lyrics("this is fucking great");
+        assert_eq!(tier, Some("R"));
+        assert!(words.contains(&"fucking".to_string()));
+    }
+
+    #[test]
+    fn classify_pg13_tier() {
+        let engine = DetectionEngine::new(&test_config());
+        let (tier, words) = engine.classify_lyrics("you are a bitch");
+        assert_eq!(tier, Some("PG-13"));
+        assert!(words.contains(&"bitch".to_string()));
+    }
+
+    #[test]
+    fn classify_r_priority_over_pg13() {
+        let engine = DetectionEngine::new(&test_config());
+        let (tier, _words) = engine.classify_lyrics("fuck that bitch");
+        assert_eq!(tier, Some("R")); // R takes priority, PG-13 not checked
+    }
+
+    #[test]
+    fn classify_clean() {
+        let engine = DetectionEngine::new(&test_config());
+        let (tier, words) = engine.classify_lyrics("beautiful sunny day");
+        assert_eq!(tier, None);
+        assert!(words.is_empty());
+    }
+
+    #[test]
+    fn classify_empty() {
+        let engine = DetectionEngine::new(&test_config());
+        let (tier, words) = engine.classify_lyrics("");
+        assert_eq!(tier, None);
+        assert!(words.is_empty());
+    }
+
+    #[test]
+    fn classify_whitespace_only() {
+        let engine = DetectionEngine::new(&test_config());
+        let (tier, words) = engine.classify_lyrics("   \n\t  ");
+        assert_eq!(tier, None);
+        assert!(words.is_empty());
+    }
+
+    #[test]
+    fn classify_exact_match_r() {
+        let engine = DetectionEngine::new(&test_config());
+        let (tier, words) = engine.classify_lyrics("that was a blowjob");
+        assert_eq!(tier, Some("R"));
+        assert!(words.contains(&"blowjob".to_string()));
+    }
+
+    #[test]
+    fn classify_mixed_dedup() {
+        // "fuck" matches as stem AND "fuck" could match as exact if it were in the list
+        // Test that stem+exact results are deduped
+        let config = DetectionConfig {
+            r_stems: vec!["fuck".into()],
+            r_exact: vec!["fuck".into()], // same word in both lists
+            pg13_stems: vec![],
+            pg13_exact: vec![],
+            false_positives: vec![],
+            g_genres: vec![],
+        };
+        let engine = DetectionEngine::new(&config);
+        let (_tier, words) = engine.classify_lyrics("fuck this");
+        // "fuck" should appear only once despite matching both stem and exact
+        assert_eq!(words.iter().filter(|w| *w == "fuck").count(), 1);
+    }
+
+    #[test]
+    fn classify_false_positive_no_trigger() {
+        let engine = DetectionEngine::new(&test_config());
+        let (tier, words) = engine.classify_lyrics("enjoy a cocktail tonight");
+        assert_eq!(tier, None);
+        assert!(words.is_empty());
+    }
+
+    #[test]
+    fn classify_non_ascii_passthrough() {
+        let engine = DetectionEngine::new(&test_config());
+        let (tier, words) = engine.classify_lyrics("café résumé naïve");
+        assert_eq!(tier, None);
+        assert!(words.is_empty());
     }
 
     #[test]
