@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Fetch lyrics from Emby/Jellyfin, detect explicit content, set parental ratings"
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.94"
 
 [[bin]]
 name = "smpr"
