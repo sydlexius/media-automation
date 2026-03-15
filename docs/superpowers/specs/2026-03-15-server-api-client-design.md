@@ -54,12 +54,19 @@ All methods on `MediaServerClient` return `Result<T, MediaServerError>`. The cal
 (rating orchestration, future milestone) decides which errors are fatal vs.
 recoverable. The server module reports errors without swallowing them.
 
+Implements `Display`, `std::error::Error`, and `From<ureq::Error>` for
+ergonomic `?` propagation from `ureq` calls.
+
 ---
 
 ## Typed Response Structs (`types.rs`)
 
 Validated against live responses from UAT Emby (4.9.3.0), prod Emby (4.10.0.5),
 and UAT Jellyfin (10.11.6). Both servers use PascalCase field names consistently.
+
+**All response structs** use `#[serde(rename_all = "PascalCase")]` to map
+Rust's `snake_case` fields to the API's PascalCase keys. Unknown fields are
+silently ignored (no `deny_unknown_fields`).
 
 ### `/System/Info/Public` — auto-detection (#69)
 
@@ -166,7 +173,9 @@ Three tiers of signals, validated against live servers and developer documentati
 
 2. **Structural shape (fallback):** `local_address` key present (singular) →
    Jellyfin. `local_addresses` key present (plural) → Emby. This is a structural
-   API difference between the two products' `PublicSystemInfo` models.
+   API difference between the two products' `PublicSystemInfo` models. If both
+   keys are present (e.g. a future version adds the other form for compatibility),
+   `local_address` (singular, Jellyfin-specific) takes precedence.
 
 3. **Server header (network fallback):** `Server` response header contains
    `Kestrel` → Jellyfin. This can be unreliable behind reverse proxies.
@@ -212,8 +221,14 @@ MediaServerClient
   base_url: String           // trailing slash stripped
   api_key: String
   server_type: ServerType    // resolved before client construction (required)
-  user_id: Option<String>    // lazily cached by first call needing it
+  user_id: OnceCell<String>  // lazily cached, interior mutability via OnceCell
 ```
+
+**Interior mutability for `user_id`:** Using `OnceCell<String>` (from `std::cell`)
+allows `get_user_id` to cache the user ID through a `&self` reference. This
+avoids requiring `&mut self` on every method that needs the user ID (`get_item`,
+`prefetch_audio_items`, `fetch_lyrics`, etc.), which would create borrow-checker
+friction for callers holding multiple references.
 
 **Construction flow:** Config loading produces `ServerConfig` with
 `server_type: Option<ServerType>`. The caller runs `detect_server_type(url)` to
@@ -237,11 +252,12 @@ JSON requests. The text endpoint (`request_text`) skips `Content-Type`.
 
 ## Internal Methods
 
-### `request(&self, method, path, body?) -> Result<Value, MediaServerError>`
+### `request(&self, method, path, body?) -> Result<Option<Value>, MediaServerError>`
 
 Authenticated JSON request. Adds auth header based on `server_type`. Parses
-response as `serde_json::Value`. Returns `MediaServerError::Http` with status
-code and body snippet on HTTP errors.
+response as `serde_json::Value`. Returns `Ok(None)` when the response body is
+empty (e.g. `POST /Items/{id}` returns no content). Returns
+`MediaServerError::Http` with status code and body snippet on HTTP errors.
 
 ### `request_text(&self, method, path) -> Result<String, MediaServerError>`
 
@@ -254,11 +270,11 @@ body as `String`. Used for Emby subtitle stream endpoint.
 
 ### User ID resolution (#71)
 
-**`get_user_id(&mut self) -> Result<String, MediaServerError>`**
+**`get_user_id(&self) -> Result<&str, MediaServerError>`**
 
-`GET /Users` → deserialize as `Vec<UserInfo>` → cache first user's `id`.
-Returns cached value on subsequent calls. Errors if list is empty or first user
-has no ID.
+`GET /Users` → deserialize as `Vec<UserInfo>` → cache first user's `id` in
+`OnceCell`. Returns cached value on subsequent calls. Errors if list is empty
+or first user has no ID.
 
 ### Item CRUD (#71)
 
@@ -273,12 +289,16 @@ update.
 
 ### Prefetch (#71)
 
-**`prefetch_audio_items(&mut self, include_media_sources: bool, parent_id: Option<&str>) -> Result<Vec<(AudioItemView, Value)>, MediaServerError>`**
+**`prefetch_audio_items(&self, include_media_sources: bool, parent_id: Option<&str>) -> Result<Vec<(AudioItemView, Value)>, MediaServerError>`**
 
 Paginated `GET /Users/{uid}/Items?Recursive=true&IncludeItemTypes=Audio&Fields=...`.
 Pages of 500 items. `include_media_sources` appends `MediaSources` to the
 `Fields` parameter (Emby only — needed for lyrics stream discovery).
 `parent_id` scopes to a specific library.
+
+**Pagination termination:** Stops when `StartIndex >= TotalRecordCount` or when
+the server returns an empty `Items` batch. Mid-pagination empty body (non-JSON
+or null response) logs a warning and returns the items collected so far.
 
 Returns pairs of `(AudioItemView, Value)` — typed view for reading fields, raw
 JSON for round-trip updates. Items are collected into a `Vec` keyed by item ID.
@@ -313,11 +333,22 @@ Falls back to embedded lyrics from `Extradata` on internal subtitle streams.
 
 Both paths apply `strip_lrc_tags` defensively before returning.
 
+**`strip_lrc_tags` location:** This function is needed by `fetch_lyrics` in PR 3
+but logically belongs with text processing. It is introduced in PR 3 as
+`src/util.rs` (a shared utility module) so it can be consumed by both the server
+module now and the detection module later. `src/main.rs` adds `mod util`.
+
 ### Authenticate by name (#74)
 
 **`authenticate_by_name(url: &str, username: &str, password: &str) -> Result<String, MediaServerError>`**
 
 Standalone function (no client instance — called before API key exists).
+
+**Note:** This is a new function, not a port from Python. The Python codebase
+does not implement `authenticate_by_name`. The auth header format is documented
+in both the [Emby API wiki](https://github.com/MediaBrowser/Emby/wiki/Api-Key-Authentication)
+and Jellyfin's client SDK. Jellyfin accepts `X-Emby-Authorization` (fork
+heritage — never renamed).
 
 `POST /Users/AuthenticateByName` with body `{"Username": "...", "Pw": "..."}`.
 
@@ -359,8 +390,9 @@ Canned JSON, no network. Run in CI.
 ### Integration tests (`tests/integration.rs`)
 
 UAT servers only. Gated behind `SMPR_UAT_TEST=1` env var. Hard-coded to
-`localhost:8096` (Emby) and `localhost:8097` (Jellyfin). API keys read from
-`.env` at repo root. **Read-only — no mutations to UAT data.**
+`localhost:8096` (Emby) and `localhost:8097` (Jellyfin). API keys loaded via
+`dotenvy` (already a dependency) from `.env` at repo root: `EMBY_API_KEY` and
+`UAT_JELLYFIN_API_KEY`. **Read-only — no mutations to UAT data.**
 
 - Auto-detection end-to-end against both UAT servers
 - User ID resolution returns non-empty string
@@ -405,13 +437,15 @@ Depends on PR 1. Delivers the full "read the server" capability.
 
 ### PR 3: Lyrics + authenticate_by_name (#72 + #74)
 
-**Files modified:**
+**Files created/modified:**
+- `src/util.rs` — `strip_lrc_tags()` (shared utility, new file)
 - `src/server/mod.rs` — `fetch_lyrics()`, `authenticate_by_name()`
 - `src/server/types.rs` — `LyricsResponse`, `LyricLine`
 - `src/server/tests/unit.rs` — Emby MediaSources traversal, Jellyfin lyrics
-  parsing, auth header construction
+  parsing, auth header construction, `strip_lrc_tags` tests
 - `src/server/tests/integration.rs` — Emby lyrics for item 8177, Jellyfin
   lyrics attempt
+- `src/main.rs` — add `mod util`
 
 Depends on PR 2. Completes the Server API Client milestone.
 
@@ -428,8 +462,8 @@ Each PR waits for CodeRabbit to finish reviewing before merging.
 - Configure wizard TUI (Milestone: Configure Wizard)
 - `_resolve_library_scope` / `_filter_by_location` (Rating milestone — consumes
   `discover_libraries` from this milestone but adds scoping logic)
-- `strip_lrc_tags` (Detection milestone — the server module will call it, but
-  the function itself lives in the detection module)
+- `strip_lrc_tags` is introduced in PR 3 as `src/util.rs` (shared utility
+  module); consumed by server module and later by detection module
 
 ---
 
