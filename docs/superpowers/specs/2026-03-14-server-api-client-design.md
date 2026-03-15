@@ -1,6 +1,6 @@
 # Server API Client — Design Spec
 
-**Date:** 2026-03-15
+**Date:** 2026-03-14
 **Status:** Draft
 **Scope:** Issues #69–#74 (Milestone: Rust Rewrite — Server API Client)
 **Depends on:** Config loading (#67–#68), merged on main
