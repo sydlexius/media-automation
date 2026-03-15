@@ -246,7 +246,7 @@ impl MediaServerClient {
                 break;
             }
             let batch_len = page.items.len() as i64;
-            let pairs = extract_audio_items(&page.items);
+            let pairs = extract_audio_items(page.items);
             all_items.extend(pairs);
             start_index += batch_len;
             log::debug!("fetched {} / {} audio items", start_index, page.total_record_count);
@@ -287,7 +287,7 @@ impl MediaServerClient {
         let result = self
             .request("GET", "/MusicGenres?Recursive=true", None)?
             .ok_or_else(|| {
-                MediaServerError::Protocol("empty response from /MusicGenres".to_string())
+                MediaServerError::Protocol("empty response from /MusicGenres?Recursive=true".to_string())
             })?;
         let resp: types::GenreResponse = serde_json::from_value(result)
             .map_err(|e| MediaServerError::Parse(format!("MusicGenres: {e}")))?;
@@ -303,13 +303,14 @@ impl MediaServerClient {
 }
 
 /// Extract (AudioItemView, Value) pairs from raw JSON item values.
+/// Consumes the input Vec to avoid cloning each Value.
 /// Logs a warning for items that fail to deserialize.
-pub fn extract_audio_items(items: &[Value]) -> Vec<(types::AudioItemView, Value)> {
+pub fn extract_audio_items(items: Vec<Value>) -> Vec<(types::AudioItemView, Value)> {
     items
-        .iter()
+        .into_iter()
         .filter_map(|v| {
-            match types::AudioItemView::deserialize(v) {
-                Ok(view) => Some((view, v.clone())),
+            match types::AudioItemView::deserialize(&v) {
+                Ok(view) => Some((view, v)),
                 Err(e) => {
                     log::warn!("skipping unparseable audio item: {e}");
                     None

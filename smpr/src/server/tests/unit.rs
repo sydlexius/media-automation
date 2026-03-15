@@ -292,7 +292,7 @@ fn extract_items_from_value_array() {
         {"Id": "1", "Path": "/music/a.mp3", "Genres": []},
         {"Id": "2", "Path": "/music/b.mp3", "Genres": ["Rock"]}
     ]"#).unwrap();
-    let pairs = extract_audio_items(&items);
+    let pairs = extract_audio_items(items);
     assert_eq!(pairs.len(), 2);
     assert_eq!(pairs[0].0.id, "1");
     assert_eq!(pairs[1].0.genres, vec!["Rock"]);
@@ -305,7 +305,7 @@ fn extract_items_skips_unparseable() {
         serde_json::json!({"NotAnItem": true}),
         serde_json::json!({"Id": "3", "Path": "/c.mp3", "Genres": []}),
     ];
-    let pairs = extract_audio_items(&items);
+    let pairs = extract_audio_items(items);
     assert_eq!(pairs.len(), 2);
     assert_eq!(pairs[0].0.id, "1");
     assert_eq!(pairs[1].0.id, "3");
