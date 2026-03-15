@@ -166,11 +166,17 @@ fn emby_fetch_lyrics_known_lrc() {
 
 #[test]
 fn jellyfin_fetch_lyrics_graceful_none() {
-    let Some(client) = jellyfin_client() else { return };
+    let Some(client) = jellyfin_client() else {
+        return;
+    };
     let items = client.prefetch_audio_items(false, None).unwrap();
     if let Some((view, raw)) = items.first() {
         // Most items won't have lyrics — verify graceful None
         let result = client.fetch_lyrics(view, raw);
-        assert!(result.is_ok(), "lyrics fetch should not error: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "lyrics fetch should not error: {:?}",
+            result.err()
+        );
     }
 }

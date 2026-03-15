@@ -348,8 +348,11 @@ impl MediaServerClient {
                     });
                 }
                 Err(e) => {
-                    log::warn!("Emby subtitle fetch failed for {} (stream {}): {e}",
-                        item.path.as_deref().unwrap_or("<unknown>"), stream_index);
+                    log::warn!(
+                        "Emby subtitle fetch failed for {} (stream {}): {e}",
+                        item.path.as_deref().unwrap_or("<unknown>"),
+                        stream_index
+                    );
                 }
             }
         }
@@ -358,10 +361,7 @@ impl MediaServerClient {
         Ok(extract_embedded_lyrics(raw))
     }
 
-    fn fetch_lyrics_jellyfin(
-        &self,
-        item_id: &str,
-    ) -> Result<Option<String>, MediaServerError> {
+    fn fetch_lyrics_jellyfin(&self, item_id: &str) -> Result<Option<String>, MediaServerError> {
         let path = format!("/Audio/{item_id}/Lyrics");
         match self.request("GET", &path, None) {
             Ok(Some(val)) => {
@@ -514,7 +514,11 @@ pub fn find_emby_lyrics_stream(raw: &Value) -> Option<(String, i64)> {
             if stream.get("Type").and_then(|v| v.as_str()) != Some("Subtitle") {
                 continue;
             }
-            if !stream.get("IsExternal").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if !stream
+                .get("IsExternal")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
                 continue;
             }
             let codec = stream.get("Codec").and_then(|v| v.as_str()).unwrap_or("");
@@ -537,7 +541,11 @@ fn extract_embedded_lyrics(raw: &Value) -> Option<String> {
             continue;
         };
         for stream in streams {
-            if stream.get("IsExternal").and_then(|v| v.as_bool()).unwrap_or(true) {
+            if stream
+                .get("IsExternal")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true)
+            {
                 continue;
             }
             if stream.get("Type").and_then(|v| v.as_str()) != Some("Subtitle") {
@@ -596,17 +604,12 @@ pub fn authenticate_by_name(
         .header("Content-Type", "application/json")
         .send_json(&body)
         .map_err(|e| {
-            MediaServerError::Connection(format!(
-                "cannot reach {endpoint} for authentication: {e}"
-            ))
+            MediaServerError::Connection(format!("cannot reach {endpoint} for authentication: {e}"))
         })?;
 
     let status = response.status().as_u16();
     if status >= 400 {
-        let body_snippet = response
-            .into_body()
-            .read_to_string()
-            .unwrap_or_default();
+        let body_snippet = response.into_body().read_to_string().unwrap_or_default();
         return Err(MediaServerError::Http {
             status,
             body: format!("authentication failed: {body_snippet}"),
@@ -624,8 +627,6 @@ pub fn authenticate_by_name(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| {
-            MediaServerError::Protocol(
-                "authentication response missing AccessToken".to_string(),
-            )
+            MediaServerError::Protocol("authentication response missing AccessToken".to_string())
         })
 }
