@@ -99,12 +99,12 @@ impl MediaServerClient {
 
         let status = response.status().as_u16();
         if status >= 400 {
-            let body_snippet = response
-                .into_body()
-                .read_to_string()
-                .unwrap_or_default();
+            let body_snippet = response.into_body().read_to_string().unwrap_or_default();
             let snippet = if body_snippet.len() > 1024 {
-                format!("{}...", &body_snippet[..body_snippet.floor_char_boundary(1024)])
+                format!(
+                    "{}...",
+                    &body_snippet[..body_snippet.floor_char_boundary(1024)]
+                )
             } else {
                 body_snippet
             };
@@ -115,36 +115,25 @@ impl MediaServerClient {
         }
 
         // Read body — empty body returns None
-        let body_str = response
-            .into_body()
-            .read_to_string()
-            .map_err(|e| MediaServerError::Connection(format!("failed to read response body: {e}")))?;
+        let body_str = response.into_body().read_to_string().map_err(|e| {
+            MediaServerError::Connection(format!("failed to read response body: {e}"))
+        })?;
         if body_str.trim().is_empty() {
             return Ok(None);
         }
         let value: Value = serde_json::from_str(&body_str).map_err(|e| {
-            MediaServerError::Parse(format!(
-                "non-JSON response on {method} {path}: {e}"
-            ))
+            MediaServerError::Parse(format!("non-JSON response on {method} {path}: {e}"))
         })?;
         Ok(Some(value))
     }
 
     /// Authenticated plain-text request. Returns raw response body.
-    pub fn request_text(
-        &self,
-        method: &str,
-        path: &str,
-    ) -> Result<String, MediaServerError> {
+    pub fn request_text(&self, method: &str, path: &str) -> Result<String, MediaServerError> {
         let url = format!("{}{}", self.base_url, path);
         let (auth_name, auth_value) = self.auth_header();
 
         let response = match method {
-            "GET" => self
-                .agent
-                .get(&url)
-                .header(auth_name, auth_value)
-                .call()?,
+            "GET" => self.agent.get(&url).header(auth_name, auth_value).call()?,
             _ => {
                 return Err(MediaServerError::Protocol(format!(
                     "unsupported method for request_text: {method}"
@@ -154,12 +143,12 @@ impl MediaServerClient {
 
         let status = response.status().as_u16();
         if status >= 400 {
-            let body_snippet = response
-                .into_body()
-                .read_to_string()
-                .unwrap_or_default();
+            let body_snippet = response.into_body().read_to_string().unwrap_or_default();
             let snippet = if body_snippet.len() > 1024 {
-                format!("{}...", &body_snippet[..body_snippet.floor_char_boundary(1024)])
+                format!(
+                    "{}...",
+                    &body_snippet[..body_snippet.floor_char_boundary(1024)]
+                )
             } else {
                 body_snippet
             };
@@ -248,10 +237,7 @@ pub fn detect_server_type(url: &str) -> Result<ServerType, MediaServerError> {
         .unwrap_or("")
         .to_string();
 
-    let body_str = response
-        .into_body()
-        .read_to_string()
-        .unwrap_or_default();
+    let body_str = response.into_body().read_to_string().unwrap_or_default();
 
     let info: SystemInfoPublic = serde_json::from_str(&body_str).unwrap_or_default();
 

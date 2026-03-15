@@ -79,7 +79,10 @@ fn parse_system_info_jellyfin() {
     }"#;
     let info: SystemInfoPublic = serde_json::from_str(json).unwrap();
     assert_eq!(info.product_name.as_deref(), Some("Jellyfin Server"));
-    assert_eq!(info.local_address.as_deref(), Some("http://172.22.0.2:8096"));
+    assert_eq!(
+        info.local_address.as_deref(),
+        Some("http://172.22.0.2:8096")
+    );
     assert!(info.local_addresses.is_none());
     assert_eq!(info.startup_wizard_completed, Some(true));
 }
