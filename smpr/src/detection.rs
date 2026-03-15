@@ -40,6 +40,15 @@ fn detect_stems(word_tokens: &[&str], stems: &[String], false_positives: &[Strin
     matched
 }
 
+#[allow(dead_code)]
+fn detect_exact(text: &str, patterns: &[(String, Regex)]) -> Vec<String> {
+    patterns
+        .iter()
+        .filter(|(_, pat)| pat.is_match(text))
+        .map(|(word, _)| word.clone())
+        .collect()
+}
+
 impl DetectionEngine {
     #[allow(dead_code)]
     pub fn new(config: &DetectionConfig) -> Self {
@@ -126,6 +135,41 @@ mod tests {
         let fp: Vec<String> = vec![];
         let result = detect_stems(&tokens, &stems, &fp);
         assert_eq!(result, vec!["shitty"]);
+    }
+
+    #[test]
+    fn exact_word_boundary() {
+        let patterns = compile_exact_patterns(&vec!["hoe".into()]);
+        let result = detect_exact("garden hoe for sale", &patterns);
+        assert_eq!(result, vec!["hoe"]);
+    }
+
+    #[test]
+    fn exact_no_partial_match() {
+        let patterns = compile_exact_patterns(&vec!["hoe".into()]);
+        let result = detect_exact("nice shoes", &patterns);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn exact_case_insensitive() {
+        let patterns = compile_exact_patterns(&vec!["blowjob".into()]);
+        let result = detect_exact("a BLOWJOB reference", &patterns);
+        assert_eq!(result, vec!["blowjob"]); // returns original word, not match text
+    }
+
+    #[test]
+    fn exact_multiple_matches() {
+        let patterns = compile_exact_patterns(&vec!["hoe".into(), "piss".into()]);
+        let result = detect_exact("hoe and piss", &patterns);
+        assert_eq!(result, vec!["hoe", "piss"]);
+    }
+
+    #[test]
+    fn exact_no_matches() {
+        let patterns = compile_exact_patterns(&vec!["blowjob".into()]);
+        let result = detect_exact("clean text here", &patterns);
+        assert!(result.is_empty());
     }
 
     #[test]
