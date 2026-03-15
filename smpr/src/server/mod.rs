@@ -175,3 +175,90 @@ impl MediaServerClient {
             .map_err(|e| MediaServerError::Connection(format!("read error: {e}")))
     }
 }
+
+/// Determine server type from a parsed SystemInfoPublic and the Server response header.
+/// Returns `None` if no signal is conclusive (caller should error with manual-override guidance).
+pub fn detect_from_response(info: &SystemInfoPublic, server_header: &str) -> Option<ServerType> {
+    // Tier 1: ProductName (official Jellyfin identification mechanism)
+    if let Some(product) = &info.product_name {
+        if product == "Jellyfin Server" {
+            return Some(ServerType::Jellyfin);
+        }
+        // ProductName present but not Jellyfin → Emby
+        return Some(ServerType::Emby);
+    }
+
+    // Tier 2: Structural shape (LocalAddress singular vs LocalAddresses plural)
+    // Singular takes precedence if both are present
+    if info.local_address.is_some() {
+        return Some(ServerType::Jellyfin);
+    }
+    if info.local_addresses.is_some() {
+        return Some(ServerType::Emby);
+    }
+
+    // Tier 3: Server response header
+    if server_header.contains("Kestrel") {
+        return Some(ServerType::Jellyfin);
+    }
+    if !server_header.is_empty() {
+        // Any non-empty, non-Kestrel server header → assume Emby
+        return Some(ServerType::Emby);
+    }
+
+    None
+}
+
+/// Auto-detect server type via GET /System/Info/Public (unauthenticated).
+/// Returns `ServerType::Emby` or `ServerType::Jellyfin`.
+/// Errors if the endpoint is unreachable or no signal can determine the type.
+pub fn detect_server_type(url: &str) -> Result<ServerType, MediaServerError> {
+    let clean_url = url.trim_end_matches('/');
+    let endpoint = format!("{clean_url}/System/Info/Public");
+
+    let agent = ureq::Agent::config_builder()
+        .timeout_per_call(Some(Duration::from_secs(10)))
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
+
+    let response = agent
+        .get(&endpoint)
+        .header("Accept", "application/json")
+        .call()
+        .map_err(|e| {
+            MediaServerError::Connection(format!(
+                "cannot reach {endpoint} to auto-detect server type: {e}"
+            ))
+        })?;
+
+    let status = response.status().as_u16();
+    if status >= 400 {
+        return Err(MediaServerError::Http {
+            status,
+            body: format!("auto-detection failed at {endpoint}"),
+        });
+    }
+
+    // Read Server header before consuming body
+    let server_header = response
+        .headers()
+        .get("Server")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let body_str = response
+        .into_body()
+        .read_to_string()
+        .unwrap_or_default();
+
+    let info: SystemInfoPublic = serde_json::from_str(&body_str).unwrap_or_default();
+
+    detect_from_response(&info, &server_header).ok_or_else(|| {
+        MediaServerError::Protocol(format!(
+            "cannot determine server type at {clean_url}. \
+             Set type = \"emby\" or type = \"jellyfin\" in your TOML config."
+        ))
+    })
+}

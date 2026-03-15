@@ -106,3 +106,79 @@ fn parse_system_info_unknown_fields_ignored() {
     let info: SystemInfoPublic = serde_json::from_str(json).unwrap();
     assert_eq!(info.server_name.as_deref(), Some("test"));
 }
+
+use super::super::detect_from_response;
+
+// Tier 1: ProductName
+#[test]
+fn detect_jellyfin_by_product_name() {
+    let info = SystemInfoPublic {
+        product_name: Some("Jellyfin Server".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(detect_from_response(&info, ""), Some(ServerType::Jellyfin));
+}
+
+#[test]
+fn detect_emby_by_product_name_other() {
+    let info = SystemInfoPublic {
+        product_name: Some("Emby Server".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(detect_from_response(&info, ""), Some(ServerType::Emby));
+}
+
+// Tier 2: Structural shape
+#[test]
+fn detect_jellyfin_by_local_address_singular() {
+    let info = SystemInfoPublic {
+        local_address: Some("http://172.22.0.2:8096".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(detect_from_response(&info, ""), Some(ServerType::Jellyfin));
+}
+
+#[test]
+fn detect_emby_by_local_addresses_plural() {
+    let info = SystemInfoPublic {
+        local_addresses: Some(vec![]),
+        ..Default::default()
+    };
+    assert_eq!(detect_from_response(&info, ""), Some(ServerType::Emby));
+}
+
+#[test]
+fn detect_jellyfin_singular_takes_precedence_over_plural() {
+    let info = SystemInfoPublic {
+        local_address: Some("http://example.com".to_string()),
+        local_addresses: Some(vec![]),
+        ..Default::default()
+    };
+    assert_eq!(detect_from_response(&info, ""), Some(ServerType::Jellyfin));
+}
+
+// Tier 3: Server header
+#[test]
+fn detect_jellyfin_by_kestrel_header() {
+    let info = SystemInfoPublic::default();
+    assert_eq!(
+        detect_from_response(&info, "Kestrel"),
+        Some(ServerType::Jellyfin)
+    );
+}
+
+#[test]
+fn detect_emby_by_upnp_header() {
+    let info = SystemInfoPublic::default();
+    assert_eq!(
+        detect_from_response(&info, "UPnP/1.0 DLNADOC/1.50"),
+        Some(ServerType::Emby)
+    );
+}
+
+// Tier 4: No signal
+#[test]
+fn detect_none_when_no_signals() {
+    let info = SystemInfoPublic::default();
+    assert_eq!(detect_from_response(&info, ""), None);
+}
