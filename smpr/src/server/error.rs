@@ -28,12 +28,8 @@ impl std::error::Error for MediaServerError {}
 
 impl From<ureq::Error> for MediaServerError {
     fn from(err: ureq::Error) -> Self {
-        match err {
-            ureq::Error::StatusCode(code) => Self::Http {
-                status: code,
-                body: String::new(),
-            },
-            other => Self::Connection(other.to_string()),
-        }
+        // With http_status_as_error(false), ureq returns HTTP 4xx/5xx as Ok(Response).
+        // Only transport/connection errors reach here.
+        Self::Connection(err.to_string())
     }
 }
