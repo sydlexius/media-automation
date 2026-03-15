@@ -163,6 +163,45 @@ impl MediaServerClient {
             .read_to_string()
             .map_err(|e| MediaServerError::Connection(format!("read error: {e}")))
     }
+
+    /// Fetch and cache the first user's ID (needed for user-scoped endpoints).
+    pub fn get_user_id(&self) -> Result<&str, MediaServerError> {
+        if let Some(id) = self.user_id.get() {
+            return Ok(id);
+        }
+        let users_val = self
+            .request("GET", "/Users", None)?
+            .ok_or_else(|| MediaServerError::Protocol("no response from /Users".to_string()))?;
+        let users: Vec<types::UserInfo> = serde_json::from_value(users_val)
+            .map_err(|e| MediaServerError::Parse(format!("/Users response: {e}")))?;
+        let first = users
+            .first()
+            .ok_or_else(|| MediaServerError::Protocol("no users returned from /Users".to_string()))?;
+        if first.id.is_empty() {
+            return Err(MediaServerError::Protocol(
+                "first user has no Id field".to_string(),
+            ));
+        }
+        let _ = self.user_id.set(first.id.clone());
+        Ok(self.user_id.get().unwrap())
+    }
+
+    /// GET /Users/{userId}/Items/{id} — full item body for round-trip update.
+    pub fn get_item(&self, item_id: &str) -> Result<Value, MediaServerError> {
+        let uid = self.get_user_id()?;
+        let path = format!("/Users/{uid}/Items/{item_id}");
+        self.request("GET", &path, None)?
+            .ok_or_else(|| {
+                MediaServerError::Protocol(format!("empty response for GET {path}"))
+            })
+    }
+
+    /// POST /Items/{id} — send full item body with modified fields.
+    pub fn update_item(&self, item_id: &str, body: &Value) -> Result<(), MediaServerError> {
+        let path = format!("/Items/{item_id}");
+        self.request("POST", &path, Some(body))?;
+        Ok(())
+    }
 }
 
 /// Determine server type from a parsed SystemInfoPublic and the Server response header.
