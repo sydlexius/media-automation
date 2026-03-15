@@ -104,7 +104,7 @@ impl MediaServerClient {
                 .read_to_string()
                 .unwrap_or_default();
             let snippet = if body_snippet.len() > 1024 {
-                format!("{}...", &body_snippet[..1024])
+                format!("{}...", &body_snippet[..body_snippet.floor_char_boundary(1024)])
             } else {
                 body_snippet
             };
@@ -118,7 +118,7 @@ impl MediaServerClient {
         let body_str = response
             .into_body()
             .read_to_string()
-            .unwrap_or_default();
+            .map_err(|e| MediaServerError::Connection(format!("failed to read response body: {e}")))?;
         if body_str.trim().is_empty() {
             return Ok(None);
         }
@@ -159,7 +159,7 @@ impl MediaServerClient {
                 .read_to_string()
                 .unwrap_or_default();
             let snippet = if body_snippet.len() > 1024 {
-                format!("{}...", &body_snippet[..1024])
+                format!("{}...", &body_snippet[..body_snippet.floor_char_boundary(1024)])
             } else {
                 body_snippet
             };
