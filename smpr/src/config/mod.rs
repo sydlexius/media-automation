@@ -219,7 +219,7 @@ impl Config {
                 parse_toml(&content).map_err(ConfigError::TomlParse)?
             }
             None => {
-                // No --config; try default path, warn if missing
+                // No --config provided; use empty defaults
                 RawConfig::default()
             }
         };
