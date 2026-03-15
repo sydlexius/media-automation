@@ -82,6 +82,16 @@ impl DetectionEngine {
     }
 
     #[allow(dead_code)]
+    pub fn match_g_genre<'a>(&self, genres: &'a [String]) -> Option<&'a str> {
+        for genre in genres {
+            if self.g_genres.contains(&genre.to_lowercase()) {
+                return Some(genre.as_str());
+            }
+        }
+        None
+    }
+
+    #[allow(dead_code)]
     pub fn classify_lyrics(&self, text: &str) -> (Option<&'static str>, Vec<String>) {
         if text.trim().is_empty() {
             return (None, vec![]);
@@ -306,6 +316,50 @@ mod tests {
         let (tier, words) = engine.classify_lyrics("café résumé naïve");
         assert_eq!(tier, None);
         assert!(words.is_empty());
+    }
+
+    #[test]
+    fn genre_match() {
+        let engine = DetectionEngine::new(&test_config());
+        let genres = vec!["Classical".into(), "Rock".into()];
+        assert_eq!(engine.match_g_genre(&genres), Some("Classical"));
+    }
+
+    #[test]
+    fn genre_no_match() {
+        let engine = DetectionEngine::new(&test_config());
+        let genres = vec!["Rock".into(), "Metal".into()];
+        assert_eq!(engine.match_g_genre(&genres), None);
+    }
+
+    #[test]
+    fn genre_empty_genres() {
+        let engine = DetectionEngine::new(&test_config());
+        let genres: Vec<String> = vec![];
+        assert_eq!(engine.match_g_genre(&genres), None);
+    }
+
+    #[test]
+    fn genre_empty_g_genres() {
+        let config = DetectionConfig {
+            r_stems: vec![],
+            r_exact: vec![],
+            pg13_stems: vec![],
+            pg13_exact: vec![],
+            false_positives: vec![],
+            g_genres: vec![], // no genres configured
+        };
+        let engine = DetectionEngine::new(&config);
+        let genres = vec!["Classical".into()];
+        assert_eq!(engine.match_g_genre(&genres), None);
+    }
+
+    #[test]
+    fn genre_first_match_wins() {
+        let engine = DetectionEngine::new(&test_config());
+        // Both "Ambient" and "Classical" are in g_genres
+        let genres = vec!["Ambient".into(), "Classical".into()];
+        assert_eq!(engine.match_g_genre(&genres), Some("Ambient")); // first in item's list
     }
 
     #[test]
