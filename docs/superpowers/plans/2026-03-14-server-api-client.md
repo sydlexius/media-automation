@@ -1730,8 +1730,12 @@ use crate::util::strip_lrc_tags;
 pub fn find_emby_lyrics_stream(raw: &Value) -> Option<(String, i64)> {
     let sources = raw.get("MediaSources")?.as_array()?;
     for source in sources {
-        let media_source_id = source.get("Id")?.as_str()?;
-        let streams = source.get("MediaStreams")?.as_array()?;
+        let Some(media_source_id) = source.get("Id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(streams) = source.get("MediaStreams").and_then(|v| v.as_array()) else {
+            continue;
+        };
         for stream in streams {
             if stream.get("Type")?.as_str()? != "Subtitle" {
                 continue;
@@ -1755,7 +1759,9 @@ fn extract_embedded_lyrics(raw: &Value) -> Option<String> {
     let sources = raw.get("MediaSources")?.as_array()?;
     let mut fragments = Vec::new();
     for source in sources {
-        let streams = source.get("MediaStreams").and_then(|v| v.as_array())?;
+        let Some(streams) = source.get("MediaStreams").and_then(|v| v.as_array()) else {
+            continue;
+        };
         for stream in streams {
             if stream.get("IsExternal").and_then(|v| v.as_bool()).unwrap_or(true) {
                 continue;
