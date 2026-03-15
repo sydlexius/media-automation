@@ -185,3 +185,101 @@ fn detect_none_when_no_signals() {
     let info = SystemInfoPublic::default();
     assert_eq!(detect_from_response(&info, ""), None);
 }
+
+use super::super::types::{
+    AudioItemView, GenreResponse, PrefetchResponse, UserInfo, VirtualFolder,
+};
+
+#[test]
+fn parse_user_info() {
+    let json = r#"{"Id": "af181ce70817479a88f588e7adc321c7", "Name": "Librarian"}"#;
+    let user: UserInfo = serde_json::from_str(json).unwrap();
+    assert_eq!(user.id, "af181ce70817479a88f588e7adc321c7");
+    assert_eq!(user.name.as_deref(), Some("Librarian"));
+}
+
+#[test]
+fn parse_user_info_extra_fields_ignored() {
+    let json = r#"{"Id": "abc123", "Name": "Test", "HasPassword": true, "Policy": {}}"#;
+    let user: UserInfo = serde_json::from_str(json).unwrap();
+    assert_eq!(user.id, "abc123");
+}
+
+#[test]
+fn parse_virtual_folder_music() {
+    let json = r#"{
+        "Name": "Music",
+        "Locations": ["/classical/", "/music/"],
+        "CollectionType": "music",
+        "ItemId": "7990",
+        "LibraryOptions": {}
+    }"#;
+    let lib: VirtualFolder = serde_json::from_str(json).unwrap();
+    assert_eq!(lib.name, "Music");
+    assert_eq!(lib.item_id, "7990");
+    assert_eq!(lib.collection_type.as_deref(), Some("music"));
+    assert_eq!(lib.locations.len(), 2);
+}
+
+#[test]
+fn parse_genre_response() {
+    let json = r#"{
+        "Items": [
+            {"Name": "Rock", "Id": "8088", "Type": "MusicGenre"},
+            {"Name": "Hip-Hop", "Id": "8081", "Type": "MusicGenre"}
+        ],
+        "TotalRecordCount": 2
+    }"#;
+    let resp: GenreResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(resp.items.len(), 2);
+    assert_eq!(resp.items[0].name, "Rock");
+}
+
+#[test]
+fn parse_audio_item_view_emby() {
+    let json = r#"{
+        "Id": "9383",
+        "Path": "/music/Watashi Wa/Eager Seas/01. Track.mp3",
+        "Genres": ["Alternative Rock", "rock"],
+        "Album": "Eager Seas",
+        "AlbumArtist": "Watashi Wa",
+        "Type": "Audio",
+        "MediaType": "Audio"
+    }"#;
+    let item: AudioItemView = serde_json::from_str(json).unwrap();
+    assert_eq!(item.id, "9383");
+    assert_eq!(item.path.as_deref(), Some("/music/Watashi Wa/Eager Seas/01. Track.mp3"));
+    assert!(item.official_rating.is_none());
+    assert_eq!(item.genres.len(), 2);
+}
+
+#[test]
+fn parse_audio_item_view_jellyfin() {
+    let json = r#"{
+        "Id": "7526015b24dce6f8fc732af486395856",
+        "Path": "/music/Watashi Wa/Eager Seas/01. Track.mp3",
+        "OfficialRating": "R",
+        "Genres": ["Rock"],
+        "Album": "Eager Seas",
+        "AlbumArtist": "Watashi Wa",
+        "HasLyrics": false,
+        "ChannelId": null
+    }"#;
+    let item: AudioItemView = serde_json::from_str(json).unwrap();
+    assert_eq!(item.id, "7526015b24dce6f8fc732af486395856");
+    assert_eq!(item.official_rating.as_deref(), Some("R"));
+}
+
+#[test]
+fn parse_prefetch_response() {
+    let json = r#"{
+        "Items": [
+            {"Id": "1", "Name": "Track 1"},
+            {"Id": "2", "Name": "Track 2"}
+        ],
+        "TotalRecordCount": 100
+    }"#;
+    let resp: PrefetchResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(resp.items.len(), 2);
+    assert_eq!(resp.total_record_count, 100);
+}
