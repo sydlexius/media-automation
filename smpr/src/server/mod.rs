@@ -257,6 +257,48 @@ impl MediaServerClient {
         log::info!("prefetched {} audio items from server", all_items.len());
         Ok(all_items)
     }
+
+    /// GET /Library/VirtualFolders — return music libraries only.
+    pub fn discover_libraries(&self) -> Result<Vec<types::VirtualFolder>, MediaServerError> {
+        let result = self
+            .request("GET", "/Library/VirtualFolders", None)?
+            .ok_or_else(|| {
+                MediaServerError::Protocol(
+                    "empty response from /Library/VirtualFolders".to_string(),
+                )
+            })?;
+        let folders: Vec<types::VirtualFolder> = serde_json::from_value(result)
+            .map_err(|e| MediaServerError::Parse(format!("VirtualFolders: {e}")))?;
+        let music: Vec<types::VirtualFolder> = folders
+            .into_iter()
+            .filter(|f| f.collection_type.as_deref() == Some("music"))
+            .collect();
+        log::info!(
+            "discovered {} music library/libraries: {}",
+            music.len(),
+            music.iter().map(|l| l.name.as_str()).collect::<Vec<_>>().join(", ")
+        );
+        Ok(music)
+    }
+
+    /// GET /MusicGenres?Recursive=true — return sorted genre names.
+    pub fn list_genres(&self) -> Result<Vec<String>, MediaServerError> {
+        let result = self
+            .request("GET", "/MusicGenres?Recursive=true", None)?
+            .ok_or_else(|| {
+                MediaServerError::Protocol("empty response from /MusicGenres".to_string())
+            })?;
+        let resp: types::GenreResponse = serde_json::from_value(result)
+            .map_err(|e| MediaServerError::Parse(format!("MusicGenres: {e}")))?;
+        let mut names: Vec<String> = resp
+            .items
+            .into_iter()
+            .filter(|g| !g.name.is_empty())
+            .map(|g| g.name)
+            .collect();
+        names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        Ok(names)
+    }
 }
 
 /// Extract (AudioItemView, Value) pairs from raw JSON item values.
