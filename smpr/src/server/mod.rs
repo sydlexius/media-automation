@@ -556,3 +556,76 @@ fn extract_embedded_lyrics(raw: &Value) -> Option<String> {
     }
     Some(strip_lrc_tags(&fragments.join("\n")))
 }
+
+/// Authenticate via POST /Users/AuthenticateByName.
+/// Standalone function — no client instance needed (called before API key exists).
+/// Returns the AccessToken from the response.
+pub fn authenticate_by_name(
+    url: &str,
+    username: &str,
+    password: &str,
+) -> Result<String, MediaServerError> {
+    let clean_url = url.trim_end_matches('/');
+    let endpoint = format!("{clean_url}/Users/AuthenticateByName");
+
+    let hostname = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    let device_id = uuid::Uuid::new_v4().to_string();
+    let version = env!("CARGO_PKG_VERSION");
+
+    let auth_header = format!(
+        "MediaBrowser Client=\"smpr\", Device=\"{hostname}\", \
+         DeviceId=\"{device_id}\", Version=\"{version}\""
+    );
+
+    let body = serde_json::json!({
+        "Username": username,
+        "Pw": password,
+    });
+
+    let agent = ureq::Agent::config_builder()
+        .timeout_per_call(Some(Duration::from_secs(15)))
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
+
+    let response = agent
+        .post(&endpoint)
+        .header("X-Emby-Authorization", &auth_header)
+        .header("Content-Type", "application/json")
+        .send_json(&body)
+        .map_err(|e| {
+            MediaServerError::Connection(format!(
+                "cannot reach {endpoint} for authentication: {e}"
+            ))
+        })?;
+
+    let status = response.status().as_u16();
+    if status >= 400 {
+        let body_snippet = response
+            .into_body()
+            .read_to_string()
+            .unwrap_or_default();
+        return Err(MediaServerError::Http {
+            status,
+            body: format!("authentication failed: {body_snippet}"),
+        });
+    }
+
+    let body_str = response
+        .into_body()
+        .read_to_string()
+        .map_err(|e| MediaServerError::Connection(format!("read error: {e}")))?;
+    let val: Value = serde_json::from_str(&body_str)
+        .map_err(|e| MediaServerError::Parse(format!("auth response: {e}")))?;
+
+    val.get("AccessToken")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            MediaServerError::Protocol(
+                "authentication response missing AccessToken".to_string(),
+            )
+        })
+}
