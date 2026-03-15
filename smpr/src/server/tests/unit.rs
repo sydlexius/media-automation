@@ -283,3 +283,30 @@ fn parse_prefetch_response() {
     assert_eq!(resp.items.len(), 2);
     assert_eq!(resp.total_record_count, 100);
 }
+
+use super::super::extract_audio_items;
+
+#[test]
+fn extract_items_from_value_array() {
+    let items: Vec<serde_json::Value> = serde_json::from_str(r#"[
+        {"Id": "1", "Path": "/music/a.mp3", "Genres": []},
+        {"Id": "2", "Path": "/music/b.mp3", "Genres": ["Rock"]}
+    ]"#).unwrap();
+    let pairs = extract_audio_items(&items);
+    assert_eq!(pairs.len(), 2);
+    assert_eq!(pairs[0].0.id, "1");
+    assert_eq!(pairs[1].0.genres, vec!["Rock"]);
+}
+
+#[test]
+fn extract_items_skips_unparseable() {
+    let items = vec![
+        serde_json::json!({"Id": "1", "Path": "/a.mp3", "Genres": []}),
+        serde_json::json!({"NotAnItem": true}),
+        serde_json::json!({"Id": "3", "Path": "/c.mp3", "Genres": []}),
+    ];
+    let pairs = extract_audio_items(&items);
+    assert_eq!(pairs.len(), 2);
+    assert_eq!(pairs[0].0.id, "1");
+    assert_eq!(pairs[1].0.id, "3");
+}

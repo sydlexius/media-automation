@@ -202,6 +202,73 @@ impl MediaServerClient {
         self.request("POST", &path, Some(body))?;
         Ok(())
     }
+
+    /// Paginated fetch of all audio items. Returns (AudioItemView, raw Value) pairs.
+    pub fn prefetch_audio_items(
+        &self,
+        include_media_sources: bool,
+        parent_id: Option<&str>,
+    ) -> Result<Vec<(types::AudioItemView, Value)>, MediaServerError> {
+        let mut fields = "Path,OfficialRating,AlbumArtist,Album,Genres".to_string();
+        if include_media_sources && self.server_type == ServerType::Emby {
+            fields.push_str(",MediaSources");
+        }
+        let uid = self.get_user_id()?;
+        let parent_filter = parent_id
+            .map(|id| format!("&ParentId={id}"))
+            .unwrap_or_default();
+
+        let mut all_items = Vec::new();
+        let mut start_index: i64 = 0;
+        let page_size = 500;
+
+        loop {
+            let path = format!(
+                "/Users/{uid}/Items?Recursive=true&IncludeItemTypes=Audio\
+                 &Fields={fields}{parent_filter}\
+                 &StartIndex={start_index}&Limit={page_size}"
+            );
+            let result = self.request("GET", &path, None)?;
+            let Some(val) = result else {
+                if !all_items.is_empty() {
+                    log::warn!(
+                        "server returned empty body mid-pagination after {} items; \
+                         prefetch may be incomplete",
+                        all_items.len()
+                    );
+                }
+                break;
+            };
+            let page: types::PrefetchResponse = serde_json::from_value(val)
+                .map_err(|e| MediaServerError::Parse(format!("prefetch response: {e}")))?;
+            if page.items.is_empty() {
+                break;
+            }
+            let batch_len = page.items.len() as i64;
+            let pairs = extract_audio_items(&page.items);
+            all_items.extend(pairs);
+            start_index += batch_len;
+            log::debug!("fetched {} / {} audio items", start_index, page.total_record_count);
+            if start_index >= page.total_record_count {
+                break;
+            }
+        }
+
+        log::info!("prefetched {} audio items from server", all_items.len());
+        Ok(all_items)
+    }
+}
+
+/// Extract (AudioItemView, Value) pairs from raw JSON item values.
+/// Skips items that fail to deserialize into AudioItemView.
+pub fn extract_audio_items(items: &[Value]) -> Vec<(types::AudioItemView, Value)> {
+    items
+        .iter()
+        .filter_map(|v| {
+            let view: types::AudioItemView = serde_json::from_value(v.clone()).ok()?;
+            Some((view, v.clone()))
+        })
+        .collect()
 }
 
 /// Determine server type from a parsed SystemInfoPublic and the Server response header.
