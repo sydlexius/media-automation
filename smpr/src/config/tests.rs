@@ -601,3 +601,69 @@ url = "http://gamma:8096"
         std::env::remove_var("GAMMA_API_KEY");
     }
 }
+
+#[test]
+fn error_partial_oneoff_server_url_only() {
+    let cli = CliInput {
+        server_url: Some("http://localhost:8096".to_string()),
+        // api_key intentionally omitted
+        ..Default::default()
+    };
+
+    let err = Config::load_from_paths(&cli).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("--server-url") && msg.contains("--api-key"),
+        "expected incomplete one-off error, got: {msg}"
+    );
+}
+
+#[test]
+fn error_partial_oneoff_api_key_only() {
+    let cli = CliInput {
+        api_key: Some("key".to_string()),
+        // server_url intentionally omitted
+        ..Default::default()
+    };
+
+    let err = Config::load_from_paths(&cli).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("--server-url") && msg.contains("--api-key"),
+        "expected incomplete one-off error, got: {msg}"
+    );
+}
+
+#[test]
+fn server_filter_skips_unneeded_resolution() {
+    // alpha has an API key, beta does NOT — but we only request alpha
+    let toml_content = r#"
+[servers.alpha]
+url = "http://alpha:8096"
+
+[servers.beta]
+url = "http://beta:8096"
+"#;
+    let mut toml_file = NamedTempFile::new().unwrap();
+    toml_file.write_all(toml_content.as_bytes()).unwrap();
+
+    unsafe {
+        std::env::set_var("ALPHA_API_KEY", "key-a");
+        std::env::remove_var("BETA_API_KEY");
+    }
+
+    let cli = CliInput {
+        config_path: Some(toml_file.path().to_path_buf()),
+        server_filter: Some(vec!["alpha".to_string()]),
+        ..Default::default()
+    };
+
+    // Should succeed even though beta has no API key
+    let cfg = Config::load_from_paths(&cli).expect("filter should skip beta");
+    assert_eq!(cfg.servers.len(), 1);
+    assert_eq!(cfg.servers[0].name, "alpha");
+
+    unsafe {
+        std::env::remove_var("ALPHA_API_KEY");
+    }
+}

@@ -52,6 +52,7 @@ jobs:
           workspaces: smpr
 
       - name: Run tests
+        # Sequential: config tests mutate process-global env vars
         run: cargo test --verbose -- --test-threads=1
 
       - name: Build release

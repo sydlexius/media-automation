@@ -147,6 +147,8 @@ pub enum ConfigError {
         requested: String,
         available: Vec<String>,
     },
+    /// Only one of --server-url / --api-key provided.
+    IncompleteOneOff,
     /// No servers configured (neither TOML nor one-off CLI).
     NoServers,
 }
@@ -178,6 +180,9 @@ impl std::fmt::Display for ConfigError {
                     "unknown server '{requested}' in --server filter. Available: {}",
                     available.join(", ")
                 )
+            }
+            Self::IncompleteOneOff => {
+                write!(f, "--server-url and --api-key must be provided together")
             }
             Self::NoServers => write!(f, "no servers configured"),
         }
@@ -268,14 +273,20 @@ impl Config {
 
 fn resolve_servers(raw: &RawConfig, cli: &CliInput) -> Result<Vec<ServerConfig>, ConfigError> {
     // One-off mode: --server-url + --api-key
-    if let (Some(url), Some(key)) = (&cli.server_url, &cli.api_key) {
-        return Ok(vec![ServerConfig {
-            name: "cli".to_string(),
-            url: url.clone(),
-            api_key: key.clone(),
-            server_type: None,
-            libraries: BTreeMap::new(),
-        }]);
+    match (&cli.server_url, &cli.api_key) {
+        (Some(url), Some(key)) => {
+            return Ok(vec![ServerConfig {
+                name: "cli".to_string(),
+                url: url.clone(),
+                api_key: key.clone(),
+                server_type: None,
+                libraries: BTreeMap::new(),
+            }]);
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(ConfigError::IncompleteOneOff);
+        }
+        (None, None) => {}
     }
 
     // TOML servers
@@ -284,8 +295,28 @@ fn resolve_servers(raw: &RawConfig, cli: &CliInput) -> Result<Vec<ServerConfig>,
         _ => return Err(ConfigError::NoServers),
     };
 
+    // Validate --server filter names before resolving secrets
+    if let Some(filter) = &cli.server_filter {
+        let available: Vec<String> = raw_servers.keys().cloned().collect();
+        for name in filter {
+            if !raw_servers.contains_key(name) {
+                return Err(ConfigError::UnknownServerFilter {
+                    requested: name.clone(),
+                    available,
+                });
+            }
+        }
+    }
+
     let mut servers = Vec::new();
     for (label, raw_srv) in raw_servers {
+        // Skip servers not in the filter
+        if let Some(filter) = &cli.server_filter
+            && !filter.contains(label)
+        {
+            continue;
+        }
+
         let url = raw_srv
             .url
             .as_ref()
@@ -310,20 +341,6 @@ fn resolve_servers(raw: &RawConfig, cli: &CliInput) -> Result<Vec<ServerConfig>,
             server_type,
             libraries,
         });
-    }
-
-    // Apply --server filter
-    if let Some(filter) = &cli.server_filter {
-        let available: Vec<String> = servers.iter().map(|s| s.name.clone()).collect();
-        for name in filter {
-            if !servers.iter().any(|s| s.name == *name) {
-                return Err(ConfigError::UnknownServerFilter {
-                    requested: name.clone(),
-                    available,
-                });
-            }
-        }
-        servers.retain(|s| filter.contains(&s.name));
     }
 
     if servers.is_empty() {
