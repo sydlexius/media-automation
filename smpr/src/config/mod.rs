@@ -224,16 +224,12 @@ pub struct CliInput {
 /// Resolve the default config file path when --config is not specified.
 /// Checks CWD for explicit_config.toml, then platform config dir.
 pub fn resolve_default_config_path() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    resolve_default_config_path_from(&cwd)
-}
-
-/// Testable version that takes CWD as a parameter.
-pub fn resolve_default_config_path_from(cwd: &std::path::Path) -> Option<PathBuf> {
     // 1. Check CWD for explicit_config.toml
-    let cwd_config = cwd.join("explicit_config.toml");
-    if cwd_config.exists() {
-        return Some(cwd_config);
+    if let Some(path) = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| resolve_default_config_path_from(&cwd))
+    {
+        return Some(path);
     }
 
     // 2. Check platform config dir
@@ -242,6 +238,17 @@ pub fn resolve_default_config_path_from(cwd: &std::path::Path) -> Option<PathBuf
         return Some(platform_config);
     }
 
+    None
+}
+
+/// Testable version that takes CWD as a parameter.
+/// Only checks CWD — does not check the platform config dir.
+/// Use `resolve_default_config_path()` for the full resolution chain.
+pub fn resolve_default_config_path_from(cwd: &std::path::Path) -> Option<PathBuf> {
+    let cwd_config = cwd.join("explicit_config.toml");
+    if cwd_config.exists() {
+        return Some(cwd_config);
+    }
     None
 }
 

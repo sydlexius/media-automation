@@ -498,8 +498,12 @@ fn overwrite_default_when_toml_omits() {
 
 #[test]
 fn missing_toml_file_uses_defaults() {
+    // Use an empty TOML to ensure defaults, not platform auto-discovery
+    let dir = tempfile::tempdir().unwrap();
+    let empty_config = dir.path().join("empty.toml");
+    std::fs::write(&empty_config, "").unwrap();
     let cli = CliInput {
-        config_path: None,
+        config_path: Some(empty_config),
         server_url: Some("http://localhost:8096".to_string()),
         api_key: Some("key".to_string()),
         ..Default::default()

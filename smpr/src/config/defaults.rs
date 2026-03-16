@@ -11,7 +11,6 @@ pub const FALSE_POSITIVES: &[&str] = &[
     "dickson",
     "scunthorpe",
     "pissarro",
-    "circumstance",
     "circumstan",
     "cucumber",
     "cumulative",
