@@ -132,7 +132,7 @@ pub fn run_wizard(
     };
 
     // Step 0: Detect existing config
-    let existing = if config_path.exists() {
+    let existing = if config_path.is_file() {
         let content = std::fs::read_to_string(&config_path)?;
         match config::parse_toml(&content) {
             Ok(raw) => Some(raw),

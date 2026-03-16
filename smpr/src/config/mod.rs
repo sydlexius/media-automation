@@ -292,10 +292,30 @@ impl Config {
                 parse_toml(&content).map_err(ConfigError::TomlParse)?
             }
             Some(path) => {
-                // Auto-discovered config
+                // Auto-discovered config — best-effort in one-off mode
                 log::debug!("Auto-discovered config at {}", path.display());
-                let content = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
-                parse_toml(&content).map_err(ConfigError::TomlParse)?
+                let oneoff = cli.server_url.is_some() && cli.api_key.is_some();
+                match std::fs::read_to_string(path) {
+                    Ok(content) => match parse_toml(&content) {
+                        Ok(raw) => raw,
+                        Err(e) if oneoff => {
+                            log::warn!(
+                                "Ignoring malformed auto-discovered config in one-off mode ({}): {e}",
+                                path.display()
+                            );
+                            RawConfig::default()
+                        }
+                        Err(e) => return Err(ConfigError::TomlParse(e)),
+                    },
+                    Err(e) if oneoff => {
+                        log::warn!(
+                            "Ignoring unreadable auto-discovered config in one-off mode ({}): {e}",
+                            path.display()
+                        );
+                        RawConfig::default()
+                    }
+                    Err(e) => return Err(ConfigError::Io(e)),
+                }
             }
             None => RawConfig::default(),
         };
@@ -306,7 +326,12 @@ impl Config {
                 .map_err(|e| ConfigError::EnvFile(format!("{}: {e}", env_path.display())))?;
         } else if let Some(env_path) = resolve_default_env_path(resolved_config_path.as_deref()) {
             log::debug!("Auto-discovered .env at {}", env_path.display());
-            let _ = dotenvy::from_path(&env_path); // best-effort, don't fail
+            if let Err(e) = dotenvy::from_path(&env_path) {
+                log::warn!(
+                    "Failed to load auto-discovered .env at {}: {e}",
+                    env_path.display()
+                );
+            }
         }
 
         // 4. Resolve servers
