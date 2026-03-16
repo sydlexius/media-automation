@@ -21,7 +21,8 @@ smpr/target/
 .idea/
 
 # Claude Code
-.claude/
+.claude/*
+!.claude/release.toml
 .serena/
 
 # AI-generated process docs (specs, plans)
