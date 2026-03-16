@@ -1,14 +1,6 @@
 # Secrets / local config
 .env*
 !.env.example
-explicit_config.toml
-explicit_config.*.toml
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.venv/
 
 # Rust
 smpr/target/
