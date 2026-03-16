@@ -197,8 +197,8 @@ Server type is auto-detected; override with `type = "emby"` or `type = "jellyfin
 
 - API keys go in `.env` at the repo root (or alongside the TOML config) as `{LABEL}_API_KEY` — never in TOML or committed files
 - Use `--env-file .env.prod` to target production credentials
-- Word lists, genre allow-list, and library force_rating rules go in `explicit_config.toml` (or `~/.config/smpr/config.toml`)
-- Only `.env.example` is committed; all `.env` variants and TOML configs are gitignored
+- Word lists, genre allow-list, and library force_rating rules go in `explicit_config.toml` (or platform config dir, e.g., `~/.config/smpr/config.toml` on Linux)
+- Only `.env.example` is committed; `.env` variants are gitignored. TOML configs are user-managed (wizard writes to the platform config dir, not the repo)
 - `overwrite` (default `true`): when true, `rate` re-evaluates all tracks including clearing ratings from clean tracks; when false, skips tracks with existing ratings (`--skip-existing`)
 - Precedence: CLI flags > env vars > `.env` file > TOML config > hardcoded defaults
 

@@ -53,7 +53,7 @@ Run `smpr configure` for an interactive setup wizard — recommended for first-t
 
 For manual setup:
 
-- **Config file**: `explicit_config.toml` in the current directory, or `~/.config/smpr/config.toml`
+- **Config file**: `explicit_config.toml` in the current directory, or the platform config directory (e.g., `~/.config/smpr/config.toml` on Linux, `~/Library/Application Support/smpr/config.toml` on macOS)
 - **API keys**: stored in `.env` as `{LABEL}_API_KEY` (e.g., `HOME_EMBY_API_KEY` for a server named `home-emby`)
 - **Precedence**: CLI flags > env vars > `.env` file > TOML config > defaults
 
