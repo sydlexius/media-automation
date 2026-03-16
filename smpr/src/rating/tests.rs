@@ -327,3 +327,52 @@ fn reset_dry_run() {
     let result = action::decide_clear_action(Some("PG-13"), true, true);
     assert_eq!(result, RatingAction::DryRunClear);
 }
+
+#[test]
+fn report_csv_output() {
+    let results = vec![
+        ItemResult {
+            item_id: "id1".into(),
+            path: Some("/music/artist/album/track.flac".into()),
+            artist: Some("Artist".into()),
+            album: Some("Album".into()),
+            tier: Some("R".into()),
+            matched_words: vec!["word1".into(), "word2".into()],
+            previous_rating: Some("G".into()),
+            action: RatingAction::Set,
+            source: Source::Lyrics,
+            server_name: "home-emby".into(),
+        },
+        ItemResult {
+            item_id: "id2".into(),
+            path: Some("/music/artist2/album2/clean.flac".into()),
+            artist: None,
+            album: None,
+            tier: None,
+            matched_words: vec![],
+            previous_rating: None,
+            action: RatingAction::Skipped,
+            source: Source::Lyrics,
+            server_name: "home-emby".into(),
+        },
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("report.csv");
+    crate::report::write_report(&results, &path);
+    let content = std::fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(
+        lines[0],
+        "artist,album,track,tier,matched_words,previous_rating,action,source,server"
+    );
+    assert!(lines[1].contains("Artist"));
+    assert!(lines[1].contains("Album"));
+    assert!(lines[1].contains("track.flac"));
+    assert!(lines[1].contains("R"));
+    assert!(lines[1].contains("word1; word2"));
+    assert!(lines[1].contains("set"));
+    assert!(lines[1].contains("lyrics"));
+    assert!(lines[1].contains("home-emby"));
+    assert!(lines[2].contains("clean.flac"));
+    assert!(lines[2].contains("skipped"));
+}
