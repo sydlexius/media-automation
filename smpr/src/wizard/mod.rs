@@ -127,15 +127,8 @@ pub fn run_wizard(
     let config_path = config_dir.join(&config_filename);
 
     let env_path = match cli_env_file {
-        Some(p) => {
-            let p = PathBuf::from(p);
-            if p.is_absolute() {
-                p
-            } else {
-                config_dir.join(p)
-            }
-        }
-        None => config_dir.join(".env"),
+        Some(p) => PathBuf::from(p), // CLI-provided path: relative to CWD (like other subcommands)
+        None => config_dir.join(".env"), // Default: alongside config file
     };
 
     // Step 0: Detect existing config

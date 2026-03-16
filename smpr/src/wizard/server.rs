@@ -60,8 +60,9 @@ fn validate_url(input: &str) -> Result<String, String> {
 
 fn suggest_label(url: &str) -> String {
     let host_port = url
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url)
         .split('/')
         .next()
         .unwrap_or("server");
