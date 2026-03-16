@@ -7,6 +7,7 @@ mod tui;
 mod util;
 
 use clap::{Args, Parser, Subcommand};
+use log::LevelFilter;
 use std::path::PathBuf;
 use std::process;
 
@@ -175,6 +176,24 @@ fn load_config(
 
 fn main() {
     let cli = Cli::parse();
+
+    // Determine verbose from any subcommand before initializing logger
+    let verbose = match &cli.command {
+        Commands::Rate { common, .. }
+        | Commands::Force { common, .. }
+        | Commands::Reset { common } => common.verbose,
+        Commands::Configure { verbose, .. } => *verbose,
+    };
+
+    env_logger::Builder::new()
+        .filter_level(if verbose {
+            LevelFilter::Debug
+        } else {
+            LevelFilter::Warn
+        })
+        .format_target(false)
+        .format_timestamp(None)
+        .init();
 
     match cli.command {
         Commands::Rate {
