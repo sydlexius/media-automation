@@ -44,9 +44,10 @@ impl inquire::Autocomplete for UrlAutocomplete {
 
 fn validate_url(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
-    if let Some(rest) = trimmed
+    let lower = trimmed.to_lowercase();
+    if let Some(rest) = lower
         .strip_prefix("http://")
-        .or_else(|| trimmed.strip_prefix("https://"))
+        .or_else(|| lower.strip_prefix("https://"))
     {
         if rest.is_empty() || rest == "/" {
             return Err("URL must include a hostname after the scheme".to_string());

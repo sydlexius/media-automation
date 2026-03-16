@@ -135,7 +135,8 @@ fn merge_defaults_and_extras(defaults: &[&str], extras: &[String]) -> Vec<String
 
 fn write_env(env_path: &Path, server: &ServerInfo, api_key: &str) -> Result<(), WizardError> {
     let env_key = format!("{}_API_KEY", server.label.to_uppercase().replace('-', "_"));
-    let new_line = format!("{env_key}={api_key}");
+    let clean_key = api_key.trim().replace(['\n', '\r'], "");
+    let new_line = format!("{env_key}={clean_key}");
 
     // Read existing .env if it exists
     let existing_content = if env_path.exists() {
