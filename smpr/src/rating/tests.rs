@@ -223,3 +223,107 @@ fn force_rating_case_insensitive() {
     let rating = scope::lookup_force_rating(&cfg, Some("music"), Some("Classical"));
     assert_eq!(rating, Some("G"));
 }
+
+// ── decide_rating_action tests ──────────────────────────────────────
+
+use super::action;
+
+#[test]
+fn decide_already_correct() {
+    let result = action::decide_rating_action("R", Some("R"), true, false);
+    assert_eq!(result, RatingAction::AlreadyCorrect);
+}
+
+#[test]
+fn decide_dry_run() {
+    let result = action::decide_rating_action("R", Some("G"), true, true);
+    assert_eq!(result, RatingAction::DryRun);
+}
+
+#[test]
+fn decide_skip_existing() {
+    let result = action::decide_rating_action("R", Some("G"), false, false);
+    assert_eq!(result, RatingAction::Skipped);
+}
+
+#[test]
+fn decide_set_no_previous() {
+    let result = action::decide_rating_action("R", None, true, false);
+    assert_eq!(result, RatingAction::Set);
+}
+
+#[test]
+fn decide_set_different_rating() {
+    let result = action::decide_rating_action("R", Some("G"), true, false);
+    assert_eq!(result, RatingAction::Set);
+}
+
+#[test]
+fn decide_set_overwrite_true_no_skip() {
+    let result = action::decide_rating_action("PG-13", Some("R"), true, false);
+    assert_eq!(result, RatingAction::Set);
+}
+
+// ── decide_clear_action tests ───────────────────────────────────────
+
+#[test]
+fn decide_clear_overwrite_has_rating() {
+    let result = action::decide_clear_action(Some("R"), true, false);
+    assert_eq!(result, RatingAction::Cleared);
+}
+
+#[test]
+fn decide_clear_no_rating() {
+    let result = action::decide_clear_action(None, true, false);
+    assert_eq!(result, RatingAction::Skipped);
+}
+
+#[test]
+fn decide_clear_skip_existing() {
+    let result = action::decide_clear_action(Some("R"), false, false);
+    assert_eq!(result, RatingAction::Skipped);
+}
+
+#[test]
+fn decide_clear_dry_run() {
+    let result = action::decide_clear_action(Some("R"), true, true);
+    assert_eq!(result, RatingAction::DryRunClear);
+}
+
+#[test]
+fn decide_clear_empty_string_rating() {
+    let result = action::decide_clear_action(Some(""), true, false);
+    assert_eq!(result, RatingAction::Skipped);
+}
+
+// Additional force/reset decision tests
+
+#[test]
+fn force_skip_existing_with_rating() {
+    let result = action::decide_rating_action("G", Some("R"), false, false);
+    assert_eq!(result, RatingAction::Skipped);
+}
+
+#[test]
+fn force_set_no_existing() {
+    let result = action::decide_rating_action("G", None, true, false);
+    assert_eq!(result, RatingAction::Set);
+}
+
+#[test]
+fn reset_no_rating_to_clear() {
+    let result = action::decide_clear_action(None, true, false);
+    assert_eq!(result, RatingAction::Skipped);
+}
+
+#[test]
+fn reset_clears_existing() {
+    let result = action::decide_clear_action(Some("R"), true, false);
+    assert_eq!(result, RatingAction::Cleared);
+}
+
+#[test]
+fn reset_dry_run() {
+    let result = action::decide_clear_action(Some("PG-13"), true, true);
+    assert_eq!(result, RatingAction::DryRunClear);
+}
