@@ -2,15 +2,15 @@
 // server, detection, rating, and report modules as they're implemented.
 #![allow(dead_code)]
 
-mod defaults;
+pub mod defaults;
 #[cfg(test)]
 mod tests;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct RawConfig {
     pub servers: Option<BTreeMap<String, RawServerConfig>>,
     pub detection: Option<RawDetection>,
@@ -18,7 +18,7 @@ pub struct RawConfig {
     pub report: Option<RawReport>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawServerConfig {
     pub url: Option<String>,
     #[serde(rename = "type")]
@@ -26,18 +26,18 @@ pub struct RawServerConfig {
     pub libraries: Option<BTreeMap<String, RawLibraryConfig>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawLibraryConfig {
     pub force_rating: Option<String>,
     pub locations: Option<BTreeMap<String, RawLocationConfig>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawLocationConfig {
     pub force_rating: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct RawDetection {
     pub r: Option<RawWordList>,
     pub pg13: Option<RawWordList>,
@@ -45,28 +45,28 @@ pub struct RawDetection {
     pub g_genres: Option<RawGenres>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawWordList {
     pub stems: Option<Vec<String>>,
     pub exact: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawIgnore {
     pub false_positives: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawGenres {
     pub genres: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawGeneral {
     pub overwrite: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawReport {
     pub output_path: Option<String>,
 }

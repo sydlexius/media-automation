@@ -696,3 +696,41 @@ fn config_error_source_none_for_others() {
         "NoServers should return None"
     );
 }
+
+#[test]
+fn raw_config_serialize_roundtrip() {
+    let toml_str = r#"
+[servers.test-server]
+url = "http://localhost:8096"
+type = "emby"
+
+[detection.r]
+stems = ["fuck"]
+exact = ["blowjob"]
+
+[detection.g_genres]
+genres = ["Classical", "Ambient"]
+
+[general]
+overwrite = false
+"#;
+    let parsed: super::RawConfig = toml::from_str(toml_str).unwrap();
+    let serialized = toml::to_string_pretty(&parsed).unwrap();
+    let reparsed: super::RawConfig = toml::from_str(&serialized).unwrap();
+
+    // Verify key fields survived the round-trip
+    let servers = reparsed.servers.unwrap();
+    assert!(servers.contains_key("test-server"));
+    let srv = &servers["test-server"];
+    assert_eq!(srv.url.as_deref(), Some("http://localhost:8096"));
+    assert_eq!(srv.server_type.as_deref(), Some("emby"));
+
+    let det = reparsed.detection.unwrap();
+    let r = det.r.unwrap();
+    assert_eq!(r.stems.unwrap(), vec!["fuck"]);
+
+    let genres = det.g_genres.unwrap();
+    assert_eq!(genres.genres.unwrap(), vec!["Classical", "Ambient"]);
+
+    assert_eq!(reparsed.general.unwrap().overwrite, Some(false));
+}
