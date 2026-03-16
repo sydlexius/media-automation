@@ -1,12 +1,45 @@
 use super::{WizardError, from_inquire};
 use crate::config::ServerType;
 use crate::server;
+use inquire::autocompletion::Replacement;
 
 /// Result of the server connection step.
 pub struct ServerInfo {
     pub url: String,
     pub label: String,
     pub server_type: ServerType,
+}
+
+/// Common server URLs suggested during autocomplete.
+const COMMON_URLS: &[&str] = &[
+    "http://localhost:8096",
+    "http://localhost:8097",
+    "http://localhost:8920",
+    "https://localhost:8096",
+    "https://localhost:8097",
+];
+
+#[derive(Clone, Default)]
+struct UrlAutocomplete;
+
+impl inquire::Autocomplete for UrlAutocomplete {
+    fn get_suggestions(&mut self, input: &str) -> Result<Vec<String>, inquire::CustomUserError> {
+        let input_lower = input.to_lowercase();
+        let suggestions: Vec<String> = COMMON_URLS
+            .iter()
+            .filter(|url| url.starts_with(&input_lower))
+            .map(|s| s.to_string())
+            .collect();
+        Ok(suggestions)
+    }
+
+    fn get_completion(
+        &mut self,
+        _input: &str,
+        highlighted_suggestion: Option<String>,
+    ) -> Result<Replacement, inquire::CustomUserError> {
+        Ok(highlighted_suggestion)
+    }
 }
 
 fn validate_url(input: &str) -> Result<String, String> {
@@ -33,6 +66,8 @@ pub fn prompt_server(verbose: bool) -> Result<ServerInfo, WizardError> {
 
     let url = inquire::Text::new("Server URL:")
         .with_placeholder("http://localhost:8096")
+        .with_autocomplete(UrlAutocomplete)
+        .with_help_message("Tab to autocomplete, or type your own URL")
         .with_validator(|input: &str| match validate_url(input) {
             Ok(_) => Ok(inquire::validator::Validation::Valid),
             Err(e) => Ok(inquire::validator::Validation::Invalid(e.into())),
