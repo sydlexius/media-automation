@@ -5,6 +5,7 @@ mod report;
 mod server;
 mod tui;
 mod util;
+mod wizard;
 
 use clap::{Args, Parser, Subcommand};
 use log::LevelFilter;
@@ -302,9 +303,15 @@ fn main() {
             let cfg = load_config(&common, None, false);
             run_workflows(&cfg, &Workflow::Reset);
         }
-        Commands::Configure { .. } => {
-            eprintln!("configure: not yet implemented");
-            process::exit(1);
+        Commands::Configure {
+            config,
+            env_file,
+            verbose: v,
+        } => {
+            if let Err(e) = wizard::run_wizard(config.as_deref(), env_file.as_deref(), v) {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
         }
     }
 }
