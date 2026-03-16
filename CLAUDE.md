@@ -177,6 +177,7 @@ Steps 3-5 are skipped when adding a server to an existing config.
 ## Named Server Model
 
 Servers are defined in TOML `[servers.*]` sections with API keys in `.env` as `{LABEL}_API_KEY` (hyphens → underscores):
+
 ```toml
 [servers.home-emby]
 url = "http://192.168.1.126:8096"
@@ -192,6 +193,7 @@ url = "http://192.168.1.126:8096"
 ```bash
 HOME_EMBY_API_KEY=your-key
 ```
+
 Server type is auto-detected; override with `type = "emby"` or `type = "jellyfin"` in the TOML section. `--server NAME` selects a specific server (repeatable). `--server-url` + `--api-key` provides one-off credentials without any TOML config.
 
 ## Configuration
