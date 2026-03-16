@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and Release
+  check:
+    name: Lint and Test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -36,25 +36,85 @@ jobs:
       - name: Run tests
         run: cargo test --verbose -- --test-threads=1
 
+  build:
+    name: Build (${{ matrix.name }})
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            binary: smpr-linux-x86_64
+            ext: ""
+          - name: macos-intel
+            runner: macos-latest
+            target: x86_64-apple-darwin
+            binary: smpr-macos-intel
+            ext: ""
+          - name: macos-apple-silicon
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            binary: smpr-macos-apple-silicon
+            ext: ""
+          - name: windows-x86_64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: smpr-windows-x86_64.exe
+            ext: ".exe"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # stable
+        with:
+          toolchain: "1.94"
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: smpr
+          key: ${{ matrix.target }}
+
+      - name: Install musl tools (Linux only)
+        if: matrix.name == 'linux-x86_64'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       - name: Build release binary
-        run: cargo build --release
+        working-directory: smpr
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Rename binary
-        run: mv target/release/smpr target/release/smpr-linux-x86_64
+        shell: bash
+        run: mv smpr/target/${{ matrix.target }}/release/smpr${{ matrix.ext }} ${{ matrix.binary }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.binary }}
+          path: ${{ matrix.binary }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          merge-multiple: true
+          path: artifacts/
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          cd ..
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" \
-              smpr/target/release/smpr-linux-x86_64 \
-              --clobber
+            gh release upload "$TAG_NAME" artifacts/* --clobber
           else
-            gh release create "$TAG_NAME" \
-              smpr/target/release/smpr-linux-x86_64 \
+            gh release create "$TAG_NAME" artifacts/* \
               --title "$TAG_NAME" \
               --generate-notes
           fi
