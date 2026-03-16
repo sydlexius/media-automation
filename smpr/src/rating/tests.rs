@@ -479,3 +479,110 @@ fn summary_counts_actions() {
     assert_eq!(counts.skipped, 1);
     assert_eq!(counts.errors, 0);
 }
+
+/// Integration tests — UAT servers only. Gated behind SMPR_UAT_TEST=1.
+/// All tests are READ-ONLY (dry-run). No mutations to UAT data.
+#[cfg(test)]
+mod integration {
+    use crate::config::{Config, DetectionConfig, ServerConfig, ServerType};
+    use crate::detection::DetectionEngine;
+    use crate::rating::*;
+    use crate::server::MediaServerClient;
+    use std::collections::BTreeMap;
+
+    fn uat_jellyfin_client() -> MediaServerClient {
+        dotenvy::from_filename("../../.env").ok();
+        let api_key = std::env::var("UAT_JELLYFIN_API_KEY")
+            .expect("UAT_JELLYFIN_API_KEY must be set for integration tests");
+        MediaServerClient::new(
+            "http://localhost:8097".into(),
+            api_key,
+            ServerType::Jellyfin,
+        )
+    }
+
+    fn dry_run_config() -> Config {
+        Config {
+            servers: vec![],
+            detection: DetectionConfig {
+                r_stems: vec!["fuck".into(), "shit".into()],
+                r_exact: vec!["blowjob".into()],
+                pg13_stems: vec!["bitch".into()],
+                pg13_exact: vec!["hoe".into()],
+                false_positives: vec!["cocktail".into()],
+                g_genres: vec!["Classical".into()],
+            },
+            overwrite: true,
+            dry_run: true,
+            report_path: None,
+            library_name: Some("Music".into()),
+            location_name: None,
+            verbose: false,
+            ignore_forced: false,
+        }
+    }
+
+    fn test_server_config() -> ServerConfig {
+        ServerConfig {
+            name: "uat-jellyfin".into(),
+            url: "http://localhost:8097".into(),
+            api_key: String::new(),
+            server_type: Some(ServerType::Jellyfin),
+            libraries: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    #[ignore] // Run with: SMPR_UAT_TEST=1 cargo test -- --ignored
+    fn uat_rate_dry_run() {
+        let client = uat_jellyfin_client();
+        let cfg = dry_run_config();
+        let srv = test_server_config();
+        let engine = DetectionEngine::new(&cfg.detection);
+        let results = rate_workflow(&client, &cfg, &srv, &engine).unwrap();
+        assert!(!results.is_empty(), "expected at least one item");
+        // All should be dry-run (no Set or Cleared)
+        for r in &results {
+            assert!(
+                !matches!(r.action, RatingAction::Set | RatingAction::Cleared),
+                "dry-run should not mutate: {:?} on {}",
+                r.action,
+                r.item_id
+            );
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn uat_force_dry_run() {
+        let client = uat_jellyfin_client();
+        let cfg = dry_run_config();
+        let srv = test_server_config();
+        let results = force_workflow(&client, &cfg, &srv, "G").unwrap();
+        assert!(!results.is_empty());
+        for r in &results {
+            assert!(matches!(
+                r.action,
+                RatingAction::DryRun | RatingAction::AlreadyCorrect
+            ));
+            assert_eq!(r.source, Source::Force);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn uat_reset_dry_run() {
+        let client = uat_jellyfin_client();
+        let cfg = dry_run_config();
+        let srv = test_server_config();
+        let results = reset_workflow(&client, &cfg, &srv).unwrap();
+        assert!(!results.is_empty());
+        for r in &results {
+            assert!(matches!(
+                r.action,
+                RatingAction::DryRunClear | RatingAction::Skipped
+            ));
+            assert_eq!(r.source, Source::Reset);
+        }
+    }
+}

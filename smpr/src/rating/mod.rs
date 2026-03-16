@@ -72,10 +72,8 @@ impl Source {
 /// Result of processing a single audio track.
 #[derive(Debug)]
 pub struct ItemResult {
-    #[expect(
-        dead_code,
-        reason = "written for future item-level operations and CSV export"
-    )]
+    // Used in integration tests and future item-level operations.
+    #[allow(dead_code)]
     pub item_id: String,
     pub path: Option<String>,
     pub artist: Option<String>,
