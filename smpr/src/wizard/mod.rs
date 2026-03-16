@@ -1,4 +1,3 @@
-// Resolved wizard types are scaffolded — stubs will be filled in by Tasks 9-14.
 #![allow(dead_code)]
 
 mod auth;

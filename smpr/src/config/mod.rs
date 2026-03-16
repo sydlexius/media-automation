@@ -234,7 +234,7 @@ pub fn resolve_default_config_path() -> Option<PathBuf> {
 
     // 2. Check platform config dir
     let platform_config = dirs::config_dir()?.join("smpr").join("config.toml");
-    if platform_config.exists() {
+    if platform_config.is_file() {
         return Some(platform_config);
     }
 
@@ -246,7 +246,7 @@ pub fn resolve_default_config_path() -> Option<PathBuf> {
 /// Use `resolve_default_config_path()` for the full resolution chain.
 pub fn resolve_default_config_path_from(cwd: &std::path::Path) -> Option<PathBuf> {
     let cwd_config = cwd.join("explicit_config.toml");
-    if cwd_config.exists() {
+    if cwd_config.is_file() {
         return Some(cwd_config);
     }
     None
@@ -260,7 +260,7 @@ pub fn resolve_default_env_path(config_path: Option<&std::path::Path>) -> Option
         && let Some(parent) = config.parent()
     {
         let env_path = parent.join(".env");
-        if env_path.exists() {
+        if env_path.is_file() {
             return Some(env_path);
         }
     }
@@ -268,7 +268,7 @@ pub fn resolve_default_env_path(config_path: Option<&std::path::Path>) -> Option
     // 2. Fallback to CWD
     if let Ok(cwd) = std::env::current_dir() {
         let cwd_env = cwd.join(".env");
-        if cwd_env.exists() {
+        if cwd_env.is_file() {
             return Some(cwd_env);
         }
     }

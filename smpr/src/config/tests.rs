@@ -497,7 +497,7 @@ fn overwrite_default_when_toml_omits() {
 }
 
 #[test]
-fn missing_toml_file_uses_defaults() {
+fn empty_toml_uses_defaults() {
     // Use an empty TOML to ensure defaults, not platform auto-discovery
     let dir = tempfile::tempdir().unwrap();
     let empty_config = dir.path().join("empty.toml");
