@@ -1185,6 +1185,9 @@ fn rate_item(
     }
 
     // No lyrics, no genre match — skip
+    // Note: source is Lyrics but tier is None and action is Skipped.
+    // Summary counting excludes this case from "lyrics evaluated" by
+    // checking that action is not Skipped when tier is None.
     Ok(ItemResult {
         item_id: view.id.clone(),
         path: view.path.clone(),
@@ -1359,13 +1362,8 @@ pub fn reset_workflow(
         let prev = view.official_rating.as_deref();
         let act = action::decide_clear_action(prev, true, config.dry_run);
         let act = if matches!(act, RatingAction::Cleared) {
-            let applied = action::apply_rating(client, &view.id, "", label);
-            // apply_rating returns Set on success; map to Cleared
-            if matches!(applied, RatingAction::Set) {
-                RatingAction::Cleared
-            } else {
-                applied
-            }
+            // apply_rating("") returns Cleared on success, Error on failure
+            action::apply_rating(client, &view.id, "", label)
         } else {
             act
         };
@@ -1743,10 +1741,10 @@ fn summary_counts_actions() {
         },
     ];
     let counts = SummaryCounts::from_results(&results);
-    assert_eq!(counts.lyrics_evaluated, 5);  // source=Lyrics
+    assert_eq!(counts.lyrics_evaluated, 4);  // source=Lyrics, excluding no-lyrics skip (#6)
     assert_eq!(counts.r_rated, 2);           // tier=R
     assert_eq!(counts.pg13, 1);              // tier=PG-13
-    assert_eq!(counts.clean, 2);             // source=Lyrics, tier=None
+    assert_eq!(counts.clean, 1);             // source=Lyrics, tier=None, not a no-lyrics skip (#4)
     assert_eq!(counts.ratings_set, 1);       // action=Set, source=Lyrics
     assert_eq!(counts.already_correct, 1);   // action=AlreadyCorrect, source=Lyrics
     assert_eq!(counts.cleared, 1);
@@ -1785,8 +1783,14 @@ impl SummaryCounts {
     pub fn from_results(results: &[ItemResult]) -> Self {
         let mut c = Self::default();
         for r in results {
-            // Lyrics evaluated = source is Lyrics
-            if r.source == Source::Lyrics {
+            // Lyrics evaluated = source is Lyrics, excluding no-lyrics skips.
+            // No-lyrics items have source=Lyrics, tier=None, action=Skipped.
+            // True clean items have source=Lyrics, tier=None, action!=Skipped
+            // (they had lyrics but no explicit content).
+            let is_lyrics = r.source == Source::Lyrics;
+            let is_no_lyrics_skip =
+                is_lyrics && r.tier.is_none() && matches!(r.action, RatingAction::Skipped);
+            if is_lyrics && !is_no_lyrics_skip {
                 c.lyrics_evaluated += 1;
             }
             // Tier counts
@@ -1795,8 +1799,8 @@ impl SummaryCounts {
                 Some("PG-13") => c.pg13 += 1,
                 _ => {}
             }
-            // Clean = has lyrics but no explicit content
-            if r.source == Source::Lyrics && r.tier.is_none() {
+            // Clean = had lyrics but no explicit content (not a no-lyrics skip)
+            if is_lyrics && r.tier.is_none() && !is_no_lyrics_skip {
                 c.clean += 1;
             }
             // Action counts by source
@@ -1860,10 +1864,21 @@ Expected: PASS
 
 - [ ] **Step 4: Implement multi-server loop in main.rs**
 
-Replace the single-server match arms with the full multi-server loop. Extract a shared function:
+Replace the single-server match arms with the full multi-server loop. First, define a workflow enum to avoid borrow checker issues with passing `&Commands`:
 
 ```rust
-fn run_workflows(cfg: &config::Config, command: &Commands) {
+/// Which workflow to run (avoids passing &Commands through the borrow checker).
+enum Workflow {
+    Rate,
+    Force(String), // target_rating
+    Reset,
+}
+```
+
+Extract a shared function:
+
+```rust
+fn run_workflows(cfg: &config::Config, workflow: &Workflow) {
     let multi = cfg.servers.len() > 1;
     let mut all_results: Vec<rating::ItemResult> = Vec::new();
     let mut had_failure = false;
@@ -1907,17 +1922,15 @@ fn run_workflows(cfg: &config::Config, command: &Commands) {
             server_type,
         );
 
-        let results = match command {
-            Commands::Rate { ignore_forced, .. } => {
+        let results = match workflow {
+            Workflow::Rate => {
                 let engine = DetectionEngine::new(&cfg.detection);
                 rating::rate_workflow(&client, cfg, server_config, &engine)
             }
-            Commands::Force {
-                rating: target_rating,
-                ..
-            } => rating::force_workflow(&client, cfg, server_config, target_rating),
-            Commands::Reset { .. } => rating::reset_workflow(&client, cfg, server_config),
-            Commands::Configure { .. } => unreachable!(),
+            Workflow::Force(ref target_rating) => {
+                rating::force_workflow(&client, cfg, server_config, target_rating)
+            }
+            Workflow::Reset => rating::reset_workflow(&client, cfg, server_config),
         };
 
         match results {
@@ -1958,15 +1971,15 @@ Update the main match arms to call `run_workflows`:
 ```rust
 Commands::Rate { common, overwrite, ignore_forced } => {
     let cfg = load_config(&common, overwrite.resolve(), ignore_forced);
-    run_workflows(&cfg, &cli.command);
+    run_workflows(&cfg, &Workflow::Rate);
 }
-Commands::Force { ref common, ref overwrite, .. } => {
-    let cfg = load_config(common, overwrite.resolve(), false);
-    run_workflows(&cfg, &cli.command);
+Commands::Force { rating: target_rating, common, overwrite } => {
+    let cfg = load_config(&common, overwrite.resolve(), false);
+    run_workflows(&cfg, &Workflow::Force(target_rating));
 }
-Commands::Reset { ref common } => {
-    let cfg = load_config(common, None, false);
-    run_workflows(&cfg, &cli.command);
+Commands::Reset { common } => {
+    let cfg = load_config(&common, None, false);
+    run_workflows(&cfg, &Workflow::Reset);
 }
 Commands::Configure { .. } => {
     eprintln!("configure: not yet implemented");
