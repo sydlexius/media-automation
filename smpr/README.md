@@ -1,0 +1,153 @@
+# smpr — Set Music Parental Rating
+
+Automatically rate music tracks on your Emby or Jellyfin server. Fetches lyrics,
+detects explicit content, and sets parental ratings (R / PG-13 / G) so you can
+filter what plays on shared devices.
+
+## Installation
+
+### Download
+
+Pre-built binaries are available on
+[GitHub Releases](https://github.com/sydlexius/media-automation/releases):
+
+| Platform | Binary |
+| -------- | ------ |
+| Linux (x86_64, static) | `smpr-linux-x86_64` |
+| macOS (Intel) | `smpr-macos-intel` |
+| macOS (Apple Silicon) | `smpr-macos-apple-silicon` |
+| Windows (x86_64) | `smpr-windows-x86_64.exe` |
+
+### Build from source
+
+```bash
+cd smpr
+cargo build --release
+# Binary at: target/release/smpr
+```
+
+## Getting Started
+
+### First-time setup
+
+Run the interactive wizard to connect to your server and create a config file:
+
+```bash
+smpr configure
+```
+
+The wizard walks you through:
+
+1. Server URL and authentication
+2. Music library discovery
+3. Genre allow-list selection (genres auto-rated G)
+4. Detection word list review
+5. Update behavior preferences
+
+It creates a TOML config file and a `.env` file with your API key.
+
+### Rating your library
+
+```bash
+# Preview what would change (no modifications)
+smpr rate --library Music --dry-run
+
+# Apply ratings based on lyrics analysis
+smpr rate --library Music
+
+# Generate a CSV report of all decisions
+smpr rate --library Music --report report.csv
+```
+
+### Other commands
+
+```bash
+# Force-rate an entire library (no lyrics check)
+smpr force G --library "Kids Music"
+
+# Remove all ratings from a library
+smpr reset --library Music
+```
+
+For full options: `smpr --help` or `smpr rate --help`.
+
+## Editing Your Config
+
+If you already have a config file, `smpr configure` opens a TUI editor where
+you can modify all settings:
+
+- **Servers** — edit URL, API key, server type; scan for libraries (`r` key)
+- **G-Rated Genres** — pick genres that get auto-rated G (fetches from server)
+- **Force Ratings** — set per-library or per-location rating overrides
+  (`n`/`g`/`p`/`r` keys)
+- **Detection Rules** — view and edit the word lists used for content detection
+- **Preferences** — toggle whether already-rated tracks get re-evaluated
+
+Press `s` to save, `q` to quit.
+
+## Configuration
+
+### Config file locations
+
+smpr looks for config in this order:
+
+1. `--config <path>` flag (explicit path)
+2. `explicit_config.toml` in the current directory
+3. Platform config directory:
+   - Linux: `~/.config/smpr/config.toml`
+   - macOS: `~/Library/Application Support/smpr/config.toml`
+   - Windows: `%APPDATA%\smpr\config.toml`
+
+### API keys
+
+API keys are stored in a `.env` file alongside your config (never in the TOML):
+
+```bash
+HOME_EMBY_API_KEY=your-api-key-here
+```
+
+The variable name is derived from the server label: `home-emby` becomes
+`HOME_EMBY_API_KEY` (uppercase, hyphens to underscores).
+
+### Example config
+
+```toml
+[servers.home-emby]
+url = "http://192.168.1.126:8096"
+# type = "emby"  # optional; auto-detected
+
+[servers.home-emby.libraries.Music]
+# force_rating = "G"  # force all tracks in this library to G
+
+[servers.home-emby.libraries.Music.locations.Classical]
+force_rating = "G"  # force tracks in this location to G
+
+[detection.g_genres]
+genres = ["Ambient", "Classical", "Instrumental", "Piano"]
+
+[general]
+overwrite = false  # skip tracks that already have a rating
+```
+
+### Multi-server
+
+You can configure multiple servers. Use `--server <name>` to target specific
+ones, or omit it to process all:
+
+```bash
+smpr rate --server home-emby --library Music
+```
+
+## How It Works
+
+1. **Fetch** — retrieves lyrics for each audio track from your server
+2. **Detect** — scans lyrics for explicit words using two tiers:
+   - **R**: strong profanity (stem + exact matching)
+   - **PG-13**: moderate profanity (only checked if no R-tier match)
+3. **Genre fallback** — tracks with no lyrics get rated G if their genre is in
+   the allow-list (e.g., Classical, Instrumental)
+4. **Apply** — sets `OfficialRating` on the track via the server API
+5. **Report** — optionally writes a CSV with every decision made
+
+False positives are handled by a configurable ignore list (e.g., "cocktail",
+"hancock", "documentary" won't trigger on "cock" or "cum" stems).
