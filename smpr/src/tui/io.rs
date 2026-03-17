@@ -106,6 +106,10 @@ pub fn save_env(
     if !content.is_empty() && !content.ends_with('\n') {
         content.push('\n');
     }
-    fs::write(path, content)?;
+
+    // Atomic write: write to tmp, rename over original
+    let tmp_path = path.with_extension("env.tmp");
+    fs::write(&tmp_path, &content)?;
+    fs::rename(&tmp_path, path)?;
     Ok(())
 }

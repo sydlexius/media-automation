@@ -101,9 +101,14 @@ pub fn run_editor(
                 if state.quit_requested {
                     match key.code {
                         crossterm::event::KeyCode::Char('y') => {
-                            if !state.read_only
-                                && let Err(e) = save(&state)
-                            {
+                            if state.read_only {
+                                state.error_message = Some(
+                                    "Cannot save: config file is read-only. Press 'n' to quit without saving.".to_string(),
+                                );
+                                state.quit_requested = false;
+                                continue;
+                            }
+                            if let Err(e) = save(&state) {
                                 state.error_message = Some(format!("Save failed: {e}"));
                                 state.quit_requested = false;
                                 continue;
@@ -265,12 +270,12 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
         }
 
         Action::Save => {
-            if !state.read_only {
-                if let Err(e) = save(state) {
-                    state.error_message = Some(format!("Save failed: {e}"));
-                } else {
-                    state.dirty = false;
-                }
+            if state.read_only {
+                state.error_message = Some("Cannot save: config file is read-only".to_string());
+            } else if let Err(e) = save(state) {
+                state.error_message = Some(format!("Save failed: {e}"));
+            } else {
+                state.dirty = false;
             }
         }
         Action::Quit => {
@@ -618,7 +623,9 @@ fn load_field_into_input(state: &mut AppState, label: &str) {
 }
 
 fn save(state: &AppState) -> Result<(), TuiError> {
-    io::save_config(&state.config, &state.config_path)?;
+    // Save .env first — if this fails, the config file remains untouched.
+    // Both use atomic writes (write to tmp, then rename).
     io::save_env(&state.env_keys, &state.initial_labels, &state.env_path)?;
+    io::save_config(&state.config, &state.config_path)?;
     Ok(())
 }

@@ -133,6 +133,8 @@ pub fn apply_force_rating(state: &mut AppState) {
     let lib_label = node.library_label.clone();
     let loc_label = node.location_label.clone();
 
+    let mut applied = false;
+
     if let Some(servers) = state.config.servers.as_mut()
         && let Some(server) = servers.get_mut(&server_label)
         && let Some(ref lib_name) = lib_label
@@ -144,14 +146,21 @@ pub fn apply_force_rating(state: &mut AppState) {
                 && let Some(loc) = locations.get_mut(loc_name)
             {
                 loc.force_rating = new_rating.clone();
+                applied = true;
             }
         } else {
             lib.force_rating = new_rating.clone();
+            applied = true;
         }
     }
 
-    state.force_state.nodes[cursor].force_rating = new_rating;
-    state.mark_dirty();
+    if applied {
+        state.force_state.nodes[cursor].force_rating = new_rating;
+        state.mark_dirty();
+    } else {
+        state.error_message =
+            Some("Could not apply force rating: config structure mismatch".to_string());
+    }
 }
 
 pub fn render_force_tree(state: &AppState, area: Rect, buf: &mut Buffer) {

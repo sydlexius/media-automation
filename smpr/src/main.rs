@@ -376,8 +376,13 @@ fn main() {
                             .map(|s| s.keys().cloned().collect())
                             .unwrap_or_default();
 
-                        let env_keys =
-                            tui::io::load_env_keys(&env_path, &server_labels).unwrap_or_default();
+                        let env_keys = match tui::io::load_env_keys(&env_path, &server_labels) {
+                            Ok(keys) => keys,
+                            Err(e) => {
+                                eprintln!("Error: could not read {}: {e}", env_path.display());
+                                process::exit(1);
+                            }
+                        };
 
                         if let Err(e) = tui::run_editor(existing, env_keys, config_path, env_path) {
                             eprintln!("Error: {e}");
