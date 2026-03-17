@@ -9,6 +9,8 @@ pub mod render;
 pub mod widgets;
 
 #[cfg(test)]
+mod action_tests;
+#[cfg(test)]
 mod app_tests;
 #[cfg(test)]
 mod force_tree_tests;
@@ -16,6 +18,8 @@ mod force_tree_tests;
 mod io_tests;
 #[cfg(test)]
 mod keymap_tests;
+#[cfg(test)]
+mod render_tests;
 
 use app::AppState;
 use crossterm::execute;
