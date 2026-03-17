@@ -107,6 +107,7 @@ Key types: `RawConfig` (serde TOML shape) vs `Config` (resolved, validated). `Cl
 Auth headers: `X-Emby-Token` (Emby) or `X-MediaBrowser-Token` (Jellyfin).
 
 Server type detection (`detect_server_type`): `GET /System/Info/Public` (unauthenticated). Three-tier detection:
+
 1. `ProductName == "Jellyfin Server"` → Jellyfin; any other ProductName → Emby
 2. Structural: `LocalAddress` (singular) → Jellyfin; `LocalAddresses` (plural) → Emby
 3. `Server` header: "Kestrel" → Jellyfin; other → Emby
@@ -118,6 +119,7 @@ Lyrics fetch (Emby): external subtitle streams via `GET /Videos/{id}/{msid}/Subt
 `DetectionEngine` is constructed from `DetectionConfig`, pre-lowercasing stems and compiling exact-match regexes.
 
 `classify_lyrics(text)` returns `(Option<tier>, Vec<matched_words>)`:
+
 1. Tokenize lowercased text with `[a-z']+` regex
 2. **R tier first**: `detect_stems` (substring match with false-positive filter) + `detect_exact` (word-boundary regex `\b{word}\b`)
 3. **PG-13 tier**: same approach, only checked if R tier found nothing
@@ -143,6 +145,7 @@ All three workflows follow the same pattern: resolve library scope → prefetch 
 ### Configure wizard (wizard/)
 
 `run_wizard` drives a multi-step interactive flow using `inquire` prompts:
+
 1. Detect existing config; offer to add a server if one exists
 2. `server.rs` — prompt for server URL, validate connectivity, auto-detect type
 3. `auth.rs` — prompt for API key directly or authenticate via username/password
