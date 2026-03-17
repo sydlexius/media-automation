@@ -9,7 +9,7 @@ CLI tool for [Emby](https://emby.media/) and [Jellyfin](https://jellyfin.org/) m
 Pre-built binaries are available on [GitHub Releases](https://github.com/sydlexius/media-automation/releases):
 
 | Platform | Binary |
-|----------|--------|
+| -------- | ------ |
 | Linux (x86_64, static) | `smpr-linux-x86_64` |
 | macOS (Intel) | `smpr-macos-intel` |
 | macOS (Apple Silicon) | `smpr-macos-apple-silicon` |
