@@ -1,5 +1,5 @@
 use crate::config::RawConfig;
-use crate::tui::app::{AppState, ForceTreeState, RATING_OPTIONS, TreeNode};
+use crate::tui::app::{AppState, ForceTreeState, Mode, RATING_OPTIONS, TreeNode};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -91,6 +91,53 @@ pub fn rating_to_index(rating: &Option<String>) -> usize {
     }
 }
 
+/// Read-only summary of the force-rate tree for normal mode.
+fn render_tree_summary(nodes: &[TreeNode], area: Rect, buf: &mut Buffer) {
+    let mut y = area.y;
+    for node in nodes {
+        if y >= area.y + area.height {
+            break;
+        }
+        let indent = "  ".repeat(node.depth);
+        if node.depth == 0 {
+            let line = Line::from(vec![
+                Span::raw(&indent),
+                Span::styled(
+                    &node.label,
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]);
+            buf.set_line(area.x, y, &line, area.width);
+        } else {
+            let icon = if node.is_library { "▸ " } else { "  " };
+            let rating_str = node.force_rating.as_deref().unwrap_or("None");
+            let color = rating_color(node.force_rating.as_deref());
+            let line = Line::from(vec![
+                Span::raw(&indent),
+                Span::styled(icon, Style::default().fg(Color::Yellow)),
+                Span::styled(&node.label, Style::default().fg(Color::Gray)),
+                Span::raw("  "),
+                Span::styled(rating_str, Style::default().fg(color)),
+            ]);
+            buf.set_line(area.x, y, &line, area.width);
+        }
+        y += 1;
+    }
+    if y < area.y + area.height {
+        y += 1;
+        if y < area.y + area.height {
+            buf.set_line(
+                area.x,
+                y,
+                &Line::styled("  Enter to edit", Style::default().fg(Color::DarkGray)),
+                area.width,
+            );
+        }
+    }
+}
+
 fn rating_color(rating: Option<&str>) -> Color {
     match rating {
         Some("G") => Color::Green,
@@ -170,6 +217,19 @@ pub fn render_force_tree(state: &AppState, area: Rect, buf: &mut Buffer) {
         .title(" Force Rating Overrides ");
     let inner = block.inner(area);
     block.render(area, buf);
+
+    // In normal mode, show a summary from config (not from ForceTreeState)
+    if state.mode != Mode::FullScreen {
+        let nodes = build_tree(&state.config);
+        if nodes.is_empty() {
+            Paragraph::new("  No servers with libraries configured.\n  Press 'r' on a server to scan libraries.")
+                .style(Style::default().fg(Color::DarkGray))
+                .render(inner, buf);
+        } else {
+            render_tree_summary(&nodes, inner, buf);
+        }
+        return;
+    }
 
     if state.force_state.nodes.is_empty() {
         Paragraph::new("  No servers with libraries configured.")

@@ -326,6 +326,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
             }
             Section::Genres => {
                 widgets::genre_picker::init_genre_state(state);
+                scan_server_genres(state);
                 state.mode = Mode::FullScreen;
             }
             Section::ForceRatings => {
@@ -792,4 +793,56 @@ fn scan_server_libraries(state: &mut AppState) {
         "Found {count} music {}",
         if count == 1 { "library" } else { "libraries" }
     ));
+}
+
+/// Scan all configured servers for genres and merge into the genre picker's available list.
+fn scan_server_genres(state: &mut AppState) {
+    let servers: Vec<(String, String, Option<String>)> = state
+        .config
+        .servers
+        .as_ref()
+        .map(|s| {
+            s.iter()
+                .filter_map(|(label, srv)| {
+                    let url = srv.url.as_ref()?.clone();
+                    let api_key = state.env_keys.get(label)?.clone();
+                    Some((url, api_key, srv.server_type.clone()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut seen: std::collections::HashSet<String> = state
+        .genre_state
+        .available
+        .iter()
+        .map(|g| g.to_lowercase())
+        .collect();
+
+    for (url, api_key, type_str) in &servers {
+        let server_type = match type_str.as_deref() {
+            Some("emby") => crate::config::ServerType::Emby,
+            Some("jellyfin") => crate::config::ServerType::Jellyfin,
+            _ => match crate::server::detect_server_type(url) {
+                Ok(t) => t,
+                Err(_) => continue,
+            },
+        };
+
+        let client =
+            crate::server::MediaServerClient::new(url.clone(), api_key.clone(), server_type);
+
+        if let Ok(genres) = client.list_genres() {
+            for genre in genres {
+                if seen.insert(genre.to_lowercase()) {
+                    state.genre_state.available.push(genre);
+                }
+            }
+        }
+    }
+
+    state
+        .genre_state
+        .available
+        .sort_by_key(|g| g.to_lowercase());
 }
