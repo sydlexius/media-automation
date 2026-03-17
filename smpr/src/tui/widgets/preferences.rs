@@ -20,7 +20,7 @@ pub fn render_preferences(state: &AppState, area: Rect, buf: &mut Buffer) {
     let [label_area, toggle_area] =
         Layout::vertical([Constraint::Length(2), Constraint::Length(1)]).areas(inner);
 
-    Paragraph::new("  Overwrite existing ratings?")
+    Paragraph::new("  Update already-rated tracks?")
         .style(Style::default().fg(Color::White))
         .render(label_area, buf);
 
