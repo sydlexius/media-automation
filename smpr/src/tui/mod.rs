@@ -132,14 +132,42 @@ pub fn run_editor(
 }
 
 fn handle_action(state: &mut app::AppState, action: keymap::Action) {
+    use app::{DetectionCategory, Mode, Section};
     use keymap::Action;
 
     match action {
         Action::NextSection => state.next_section(),
         Action::PrevSection => state.prev_section(),
         Action::TogglePane => state.toggle_pane(),
-        Action::NextItem => {}
-        Action::PrevItem => {}
+
+        Action::NextItem => {
+            if state.section == Section::Detection {
+                if state.detection_state.editing {
+                    let cat = DetectionCategory::ALL[state.detection_state.selected_category];
+                    let count =
+                        widgets::detection::get_words(state.config.detection.as_ref(), cat).len();
+                    if count > 0 {
+                        state.detection_state.word_cursor =
+                            (state.detection_state.word_cursor + 1).min(count - 1);
+                    }
+                } else {
+                    state.detection_state.selected_category =
+                        (state.detection_state.selected_category + 1)
+                            .min(DetectionCategory::ALL.len() - 1);
+                }
+            }
+        }
+        Action::PrevItem => {
+            if state.section == Section::Detection {
+                if state.detection_state.editing {
+                    state.detection_state.word_cursor =
+                        state.detection_state.word_cursor.saturating_sub(1);
+                } else {
+                    state.detection_state.selected_category =
+                        state.detection_state.selected_category.saturating_sub(1);
+                }
+            }
+        }
 
         Action::Save => {
             if !state.read_only {
@@ -154,11 +182,84 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
             state.quit_requested = true;
         }
 
-        Action::Edit => {}
-        Action::Confirm => {}
-        Action::Cancel => {}
-        Action::Add => {}
-        Action::Delete => {}
+        Action::Edit => match state.section {
+            Section::Preferences => {
+                state.set_overwrite(!state.preferences_state.overwrite);
+            }
+            Section::Detection => {
+                state.detection_state.editing = true;
+                state.detection_state.word_cursor = 0;
+                state.mode = Mode::Editing;
+            }
+            _ => {}
+        },
+
+        Action::Confirm => {
+            if state.section == Section::Detection {
+                if state.detection_state.adding {
+                    let word = state.detection_state.text_input.text.trim().to_string();
+                    if !word.is_empty() {
+                        let cat = DetectionCategory::ALL[state.detection_state.selected_category];
+                        let words =
+                            widgets::detection::get_words_mut(&mut state.config.detection, cat);
+                        words.push(word);
+                        state.mark_dirty();
+                    }
+                    state.detection_state.adding = false;
+                    state.detection_state.text_input.clear();
+                } else if state.detection_state.editing {
+                    state.detection_state.editing = false;
+                    state.mode = Mode::Normal;
+                }
+            }
+        }
+
+        Action::Cancel => {
+            if state.mode == Mode::Editing {
+                if state.detection_state.adding {
+                    state.detection_state.adding = false;
+                    state.detection_state.text_input.clear();
+                } else {
+                    state.detection_state.editing = false;
+                    state.mode = Mode::Normal;
+                }
+            }
+        }
+
+        Action::Add => {
+            if state.section == Section::Detection && state.detection_state.editing {
+                state.detection_state.adding = true;
+                state.detection_state.text_input.clear();
+            }
+        }
+
+        Action::Delete => {
+            if state.section == Section::Detection && state.detection_state.editing {
+                let cat = DetectionCategory::ALL[state.detection_state.selected_category];
+                let words = widgets::detection::get_words_mut(&mut state.config.detection, cat);
+                if state.detection_state.word_cursor < words.len() {
+                    words.remove(state.detection_state.word_cursor);
+                    if state.detection_state.word_cursor >= words.len() && !words.is_empty() {
+                        state.detection_state.word_cursor = words.len() - 1;
+                    }
+                    state.mark_dirty();
+                }
+            }
+        }
+
+        Action::Char(c) => {
+            if state.detection_state.adding {
+                state.detection_state.text_input.insert_char(c);
+            }
+        }
+
+        Action::Backspace => {
+            if state.detection_state.adding {
+                state.detection_state.text_input.delete_back();
+            }
+        }
+
+        // Stubs for unimplemented actions
         Action::Toggle => {}
         Action::NextOption => {}
         Action::PrevOption => {}
@@ -166,8 +267,6 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
         Action::PageUp => {}
         Action::PageDown => {}
         Action::ExpandCollapse => {}
-        Action::Char(_) => {}
-        Action::Backspace => {}
     }
 }
 

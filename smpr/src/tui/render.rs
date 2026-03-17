@@ -117,9 +117,20 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
 }
 
 fn render_content(state: &AppState, area: Rect, buf: &mut Buffer) {
-    let label = state.section.label();
-    let msg = format!("  {label} — content coming soon");
-    Paragraph::new(msg)
-        .style(Style::default().fg(Color::DarkGray))
-        .render(area, buf);
+    use crate::tui::app::Section;
+    match state.section {
+        Section::Preferences => {
+            super::widgets::preferences::render_preferences(state, area, buf);
+        }
+        Section::Detection => {
+            super::widgets::detection::render_detection(state, area, buf);
+        }
+        _ => {
+            let label = state.section.label();
+            let msg = format!("  {label} — content coming soon");
+            Paragraph::new(msg)
+                .style(Style::default().fg(Color::DarkGray))
+                .render(area, buf);
+        }
+    }
 }
