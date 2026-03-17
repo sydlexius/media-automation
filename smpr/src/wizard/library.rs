@@ -7,7 +7,7 @@ pub struct GenreConfig {
 }
 
 /// Recommended G-genres for first-time setup.
-const DEFAULT_G_GENRES: &[&str] = &[
+pub const DEFAULT_G_GENRES: &[&str] = &[
     "Ambient",
     "Classical",
     "Electronic",
