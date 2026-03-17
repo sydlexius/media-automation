@@ -2,7 +2,7 @@
 
 mod auth;
 mod detection;
-mod library;
+pub mod library;
 mod output;
 mod preferences;
 mod server;

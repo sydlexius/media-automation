@@ -173,6 +173,14 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                             (state.server_state.selected + 1).min(count - 1);
                     }
                 }
+            } else if state.section == Section::Genres && state.mode == Mode::FullScreen {
+                let filtered = widgets::genre_picker::filtered_genres(&state.genre_state);
+                let max = if filtered.is_empty() && !state.genre_state.filter.is_empty() {
+                    0 // phantom add entry
+                } else {
+                    filtered.len().saturating_sub(1)
+                };
+                state.genre_state.cursor = (state.genre_state.cursor + 1).min(max);
             }
         }
         Action::PrevItem => {
@@ -198,6 +206,8 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 } else {
                     state.server_state.selected = state.server_state.selected.saturating_sub(1);
                 }
+            } else if state.section == Section::Genres && state.mode == Mode::FullScreen {
+                state.genre_state.cursor = state.genre_state.cursor.saturating_sub(1);
             }
         }
 
@@ -232,10 +242,36 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                     }
                 }
             }
+            Section::Genres => {
+                widgets::genre_picker::init_genre_state(state);
+                state.mode = Mode::FullScreen;
+            }
             _ => {}
         },
 
         Action::Confirm => {
+            // Genre picker confirm — must come before server/detection checks
+            if state.section == Section::Genres && state.mode == Mode::FullScreen {
+                if state.genre_state.filter_active {
+                    let filtered = widgets::genre_picker::filtered_genres(&state.genre_state);
+                    if filtered.is_empty() && !state.genre_state.filter.is_empty() {
+                        // Add custom genre
+                        let new_genre = state.genre_state.filter.clone();
+                        state.genre_state.available.push(new_genre.clone());
+                        state.genre_state.selected.insert(new_genre);
+                        widgets::genre_picker::sync_genres_to_config(state);
+                        state.mark_dirty();
+                    }
+                    state.genre_state.filter.clear();
+                    state.genre_state.filter_active = false;
+                    state.genre_state.cursor = 0;
+                } else {
+                    // Exit fullscreen, keep selections
+                    state.mode = Mode::Normal;
+                }
+                return;
+            }
+
             // Adding a new server (label input step) — must come before Detection check
             if state.section == Section::Servers
                 && state.mode == Mode::Editing
@@ -336,6 +372,15 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
         }
 
         Action::Cancel => {
+            if state.section == Section::Genres && state.mode == Mode::FullScreen {
+                if let Some(snapshot) = state.genre_state.snapshot.take() {
+                    state.genre_state.selected = snapshot;
+                    widgets::genre_picker::sync_genres_to_config(state);
+                }
+                state.genre_state.filter_active = false;
+                state.mode = Mode::Normal;
+                return;
+            }
             if state.mode == Mode::Editing {
                 if state.section == Section::Servers {
                     state.mode = Mode::Normal;
@@ -394,6 +439,9 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 state.detection_state.text_input.insert_char(c);
             } else if state.section == Section::Servers && state.mode == Mode::Editing {
                 state.server_state.text_input.insert_char(c);
+            } else if state.section == Section::Genres && state.genre_state.filter_active {
+                state.genre_state.filter.push(c);
+                state.genre_state.cursor = 0;
             }
         }
 
@@ -402,16 +450,48 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 state.detection_state.text_input.delete_back();
             } else if state.section == Section::Servers && state.mode == Mode::Editing {
                 state.server_state.text_input.delete_back();
+            } else if state.section == Section::Genres && state.genre_state.filter_active {
+                state.genre_state.filter.pop();
+                state.genre_state.cursor = 0;
             }
         }
 
         // Stubs for unimplemented actions
-        Action::Toggle => {}
+        Action::Toggle => {
+            if state.section == Section::Genres && state.mode == Mode::FullScreen {
+                let filtered = widgets::genre_picker::filtered_genres(&state.genre_state);
+                if let Some((_, genre)) = filtered.get(state.genre_state.cursor) {
+                    let genre = (*genre).clone();
+                    if state.genre_state.selected.contains(&genre) {
+                        state.genre_state.selected.remove(&genre);
+                    } else {
+                        state.genre_state.selected.insert(genre);
+                    }
+                    widgets::genre_picker::sync_genres_to_config(state);
+                    state.mark_dirty();
+                }
+            }
+        }
         Action::NextOption => {}
         Action::PrevOption => {}
-        Action::StartFilter => {}
-        Action::PageUp => {}
-        Action::PageDown => {}
+        Action::StartFilter => {
+            if state.section == Section::Genres && state.mode == Mode::FullScreen {
+                state.genre_state.filter_active = true;
+                state.genre_state.filter.clear();
+            }
+        }
+        Action::PageUp => {
+            if state.section == Section::Genres && state.mode == Mode::FullScreen {
+                state.genre_state.cursor = state.genre_state.cursor.saturating_sub(10);
+            }
+        }
+        Action::PageDown => {
+            if state.section == Section::Genres && state.mode == Mode::FullScreen {
+                let filtered = widgets::genre_picker::filtered_genres(&state.genre_state);
+                let max = filtered.len().saturating_sub(1);
+                state.genre_state.cursor = (state.genre_state.cursor + 10).min(max);
+            }
+        }
         Action::ExpandCollapse => {}
     }
 }
