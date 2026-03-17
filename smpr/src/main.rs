@@ -308,30 +308,12 @@ fn main() {
             env_file,
             verbose: v,
         } => {
-            let config_dir = wizard::resolve_config_dir(config.as_deref());
-            let config_filename = if let Some(cfg) = &config {
-                let p = PathBuf::from(cfg);
-                if p.is_dir() {
-                    eprintln!(
-                        "Error: --config must be a file path, not a directory: {}",
-                        p.display()
-                    );
-                    process::exit(1);
-                }
-                p.file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "config.toml".to_string())
-            } else if config_dir == std::env::current_dir().unwrap_or_default() {
-                "explicit_config.toml".to_string()
-            } else {
-                "config.toml".to_string()
-            };
-            let config_path = config_dir.join(&config_filename);
-
-            let env_path = match &env_file {
-                Some(p) => PathBuf::from(p),
-                None => config_dir.join(".env"),
-            };
+            let (config_path, env_path) =
+                wizard::resolve_config_paths(config.as_deref(), env_file.as_deref())
+                    .unwrap_or_else(|e| {
+                        eprintln!("Error: {e}");
+                        process::exit(1);
+                    });
 
             // Try to load existing config
             let existing = if config_path.is_file() {

@@ -242,6 +242,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 }
                 if next < len {
                     state.force_state.cursor = next;
+                    adjust_force_scroll(state);
                 }
             }
         }
@@ -295,6 +296,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 }
                 if !state.force_state.nodes.is_empty() && state.force_state.nodes[prev].depth > 0 {
                     state.force_state.cursor = prev;
+                    adjust_force_scroll(state);
                 }
             }
         }
@@ -668,6 +670,29 @@ fn load_field_into_input(state: &mut AppState, label: &str) {
         None => String::new(),
     };
     state.server_state.text_input.set(&text);
+}
+
+/// Adjust scroll_offset so the cursor stays visible in the force-rate tree.
+/// Assumes a visible height of ~20 rows (will be clamped by actual render).
+fn adjust_force_scroll(state: &mut AppState) {
+    // Count visible position of cursor
+    let mut visible_pos: usize = 0;
+    for (i, _node) in state.force_state.nodes.iter().enumerate() {
+        if !widgets::force_tree::is_node_visible(&state.force_state, i) {
+            continue;
+        }
+        if i == state.force_state.cursor {
+            break;
+        }
+        visible_pos += 1;
+    }
+
+    let page_size = 15; // approximate visible rows
+    if visible_pos < state.force_state.scroll_offset {
+        state.force_state.scroll_offset = visible_pos;
+    } else if visible_pos >= state.force_state.scroll_offset + page_size {
+        state.force_state.scroll_offset = visible_pos - page_size + 1;
+    }
 }
 
 fn save(state: &mut AppState) -> Result<(), TuiError> {

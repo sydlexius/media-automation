@@ -64,6 +64,47 @@ fn from_inquire(e: inquire::InquireError) -> WizardError {
     }
 }
 
+/// Resolve the full config file path and .env path from CLI arguments.
+///
+/// Validates that --config is not a directory. Returns (config_path, env_path).
+pub fn resolve_config_paths(
+    cli_config: Option<&str>,
+    cli_env_file: Option<&str>,
+) -> Result<(PathBuf, PathBuf), WizardError> {
+    let config_dir = resolve_config_dir(cli_config);
+
+    let config_filename = if let Some(cfg) = cli_config {
+        let cfg_path = PathBuf::from(cfg);
+        if cfg_path.is_dir() {
+            return Err(WizardError::Prompt(format!(
+                "--config must be a file path, not a directory: {}",
+                cfg_path.display()
+            )));
+        }
+        match cfg_path.file_name() {
+            Some(name) => name.to_string_lossy().to_string(),
+            None => {
+                return Err(WizardError::Prompt(format!(
+                    "invalid --config path (expected a file path): {}",
+                    cfg_path.display()
+                )));
+            }
+        }
+    } else if config_dir == std::env::current_dir().unwrap_or_default() {
+        "explicit_config.toml".to_string()
+    } else {
+        "config.toml".to_string()
+    };
+
+    let config_path = config_dir.join(&config_filename);
+    let env_path = match cli_env_file {
+        Some(p) => PathBuf::from(p),
+        None => config_dir.join(".env"),
+    };
+
+    Ok((config_path, env_path))
+}
+
 /// Resolve the config directory for reading/writing.
 ///
 /// Priority:
@@ -104,36 +145,7 @@ pub fn run_wizard(
     verbose: bool,
     add_server: bool,
 ) -> Result<(), WizardError> {
-    let config_dir = resolve_config_dir(cli_config);
-    let config_filename = if let Some(cfg) = cli_config {
-        let cfg_path = PathBuf::from(cfg);
-        // Reject directories
-        if cfg_path.is_dir() {
-            return Err(WizardError::Prompt(format!(
-                "--config must be a file path, not a directory: {}",
-                cfg_path.display()
-            )));
-        }
-        match cfg_path.file_name() {
-            Some(name) => name.to_string_lossy().to_string(),
-            None => {
-                return Err(WizardError::Prompt(format!(
-                    "invalid --config path (expected a file path): {}",
-                    cfg_path.display()
-                )));
-            }
-        }
-    } else if config_dir == std::env::current_dir().unwrap_or_default() {
-        "explicit_config.toml".to_string()
-    } else {
-        "config.toml".to_string()
-    };
-    let config_path = config_dir.join(&config_filename);
-
-    let env_path = match cli_env_file {
-        Some(p) => PathBuf::from(p), // CLI-provided path: relative to CWD (like other subcommands)
-        None => config_dir.join(".env"), // Default: alongside config file
-    };
+    let (config_path, env_path) = resolve_config_paths(cli_config, cli_env_file)?;
 
     // Step 0: Detect existing config
     let existing = if config_path.is_file() {
