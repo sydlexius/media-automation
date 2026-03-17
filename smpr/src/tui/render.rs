@@ -128,6 +128,9 @@ fn render_content(state: &AppState, area: Rect, buf: &mut Buffer) {
         Section::Detection => {
             super::widgets::detection::render_detection(state, area, buf);
         }
+        Section::Genres => {
+            super::widgets::genre_picker::render_genre_picker(state, area, buf);
+        }
         _ => {
             let label = state.section.label();
             let msg = format!("  {label} — content coming soon");

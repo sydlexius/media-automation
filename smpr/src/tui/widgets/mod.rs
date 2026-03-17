@@ -1,4 +1,5 @@
 pub mod detection;
+pub mod genre_picker;
 pub mod popup;
 pub mod preferences;
 pub mod server_list;
