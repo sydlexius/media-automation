@@ -14,20 +14,15 @@ pub struct GenreConfig {
 }
 
 /// Recommended G-genres for first-time setup.
+/// Only genres that are inherently instrumental / guaranteed clean.
 pub const DEFAULT_G_GENRES: &[&str] = &[
     "Ambient",
     "Classical",
-    "Electronic",
     "Instrumental",
-    "Jazz",
-    "Lo-fi",
     "Meditation",
     "New Age",
-    "Opera",
     "Orchestral",
     "Piano",
-    "Soundtrack",
-    "World Music",
 ];
 
 pub fn prompt_library_and_genres(
