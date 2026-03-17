@@ -119,6 +119,9 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
 fn render_content(state: &AppState, area: Rect, buf: &mut Buffer) {
     use crate::tui::app::Section;
     match state.section {
+        Section::Servers => {
+            super::widgets::server_list::render_server_list(state, area, buf);
+        }
         Section::Preferences => {
             super::widgets::preferences::render_preferences(state, area, buf);
         }
