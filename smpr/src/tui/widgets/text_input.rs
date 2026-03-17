@@ -50,18 +50,22 @@ impl Widget for TextInput<'_> {
         } else {
             self.style
         };
+        // cursor is a byte offset — convert to char index for display
+        let cursor_char_idx = self.state.text[..self.state.cursor.min(self.state.text.len())]
+            .chars()
+            .count();
         let width = area.width as usize;
-        let scroll = if self.state.cursor > width.saturating_sub(1) {
-            self.state.cursor - width + 1
+        let scroll = if cursor_char_idx > width.saturating_sub(1) {
+            cursor_char_idx - width + 1
         } else {
             0
         };
         let visible: String = text.chars().skip(scroll).take(width).collect();
         buf.set_string(area.x, area.y, &visible, style);
         if !is_placeholder {
-            let cursor_x = (self.state.cursor - scroll) as u16;
+            let cursor_x = (cursor_char_idx - scroll) as u16;
             if cursor_x < area.width {
-                let cursor_char = text.chars().nth(self.state.cursor).unwrap_or(' ');
+                let cursor_char = text.chars().nth(cursor_char_idx).unwrap_or(' ');
                 buf.set_string(
                     area.x + cursor_x,
                     area.y,

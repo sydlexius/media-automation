@@ -124,6 +124,30 @@ pub fn run_editor(
                     continue;
                 }
 
+                // Handle server delete confirmation
+                if state.server_state.delete_requested {
+                    match key.code {
+                        crossterm::event::KeyCode::Char('y') => {
+                            if let Some(label) = selected_server_label(&state) {
+                                if let Some(servers) = state.config.servers.as_mut() {
+                                    servers.remove(&label);
+                                }
+                                state.env_keys.remove(&label);
+                                let count = server_count(&state);
+                                if state.server_state.selected >= count && count > 0 {
+                                    state.server_state.selected = count - 1;
+                                }
+                                state.mark_dirty();
+                            }
+                            state.server_state.delete_requested = false;
+                        }
+                        _ => {
+                            state.server_state.delete_requested = false;
+                        }
+                    }
+                    continue;
+                }
+
                 let action = keymap::map_key(state.mode, state.active_pane, state.section, key);
 
                 if let Some(action) = action {
@@ -311,25 +335,26 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
         },
 
         Action::Confirm => {
-            // Genre picker confirm — must come before server/detection checks
-            if state.section == Section::Genres && state.mode == Mode::FullScreen {
-                if state.genre_state.filter_active {
-                    let filtered = widgets::genre_picker::filtered_genres(&state.genre_state);
-                    if filtered.is_empty() && !state.genre_state.filter.is_empty() {
-                        // Add custom genre
-                        let new_genre = state.genre_state.filter.clone();
-                        state.genre_state.available.push(new_genre.clone());
-                        state.genre_state.selected.insert(new_genre);
-                        widgets::genre_picker::sync_genres_to_config(state);
-                        state.mark_dirty();
-                    }
-                    state.genre_state.filter.clear();
-                    state.genre_state.filter_active = false;
-                    state.genre_state.cursor = 0;
-                } else {
-                    // Exit fullscreen, keep selections
-                    state.mode = Mode::Normal;
+            // Genre filter confirm (Mode::Filtering) — add custom genre or close filter
+            if state.section == Section::Genres && state.mode == Mode::Filtering {
+                let filtered = widgets::genre_picker::filtered_genres(&state.genre_state);
+                if filtered.is_empty() && !state.genre_state.filter.is_empty() {
+                    let new_genre = state.genre_state.filter.clone();
+                    state.genre_state.available.push(new_genre.clone());
+                    state.genre_state.selected.insert(new_genre);
+                    widgets::genre_picker::sync_genres_to_config(state);
+                    state.mark_dirty();
                 }
+                state.genre_state.filter.clear();
+                state.genre_state.filter_active = false;
+                state.genre_state.cursor = 0;
+                state.mode = Mode::FullScreen;
+                return;
+            }
+
+            // Genre picker confirm (FullScreen, filter not active) — exit and keep selections
+            if state.section == Section::Genres && state.mode == Mode::FullScreen {
+                state.mode = Mode::Normal;
                 return;
             }
 
@@ -433,6 +458,15 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
         }
 
         Action::Cancel => {
+            // Esc while filtering → close filter, stay in genre fullscreen
+            if state.section == Section::Genres && state.mode == Mode::Filtering {
+                state.genre_state.filter.clear();
+                state.genre_state.filter_active = false;
+                state.genre_state.cursor = 0;
+                state.mode = Mode::FullScreen;
+                return;
+            }
+            // Esc in genre fullscreen → revert selections, exit
             if state.section == Section::Genres && state.mode == Mode::FullScreen {
                 if let Some(snapshot) = state.genre_state.snapshot.take() {
                     state.genre_state.selected = snapshot;
@@ -484,17 +518,10 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 }
             } else if state.section == Section::Servers
                 && state.mode == Mode::Normal
-                && let Some(label) = selected_server_label(state)
+                && selected_server_label(state).is_some()
             {
-                if let Some(servers) = state.config.servers.as_mut() {
-                    servers.remove(&label);
-                }
-                state.env_keys.remove(&label);
-                let count = server_count(state);
-                if state.server_state.selected >= count && count > 0 {
-                    state.server_state.selected = count - 1;
-                }
-                state.mark_dirty();
+                // Request confirmation before deleting
+                state.server_state.delete_requested = true;
             }
         }
 
@@ -503,7 +530,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 state.detection_state.text_input.insert_char(c);
             } else if state.section == Section::Servers && state.mode == Mode::Editing {
                 state.server_state.text_input.insert_char(c);
-            } else if state.section == Section::Genres && state.genre_state.filter_active {
+            } else if state.section == Section::Genres && state.mode == Mode::Filtering {
                 state.genre_state.filter.push(c);
                 state.genre_state.cursor = 0;
             }
@@ -514,7 +541,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 state.detection_state.text_input.delete_back();
             } else if state.section == Section::Servers && state.mode == Mode::Editing {
                 state.server_state.text_input.delete_back();
-            } else if state.section == Section::Genres && state.genre_state.filter_active {
+            } else if state.section == Section::Genres && state.mode == Mode::Filtering {
                 state.genre_state.filter.pop();
                 state.genre_state.cursor = 0;
             }
@@ -552,6 +579,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
             if state.section == Section::Genres && state.mode == Mode::FullScreen {
                 state.genre_state.filter_active = true;
                 state.genre_state.filter.clear();
+                state.mode = Mode::Filtering;
             }
         }
         Action::PageUp => {

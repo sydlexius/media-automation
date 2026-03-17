@@ -58,6 +58,8 @@ pub enum Mode {
     Normal,
     Editing,
     FullScreen,
+    /// Genre filter active — all chars route to filter text input.
+    Filtering,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -106,6 +108,7 @@ pub enum ServerField {
 pub struct ServerListState {
     pub selected: usize,
     pub editing_field: Option<ServerField>,
+    pub delete_requested: bool,
     pub text_input: TextInputState,
 }
 
@@ -325,15 +328,14 @@ impl AppState {
                             .values()
                             .flat_map(|s| {
                                 s.libraries.as_ref().into_iter().flat_map(|libs| {
-                                    libs.values().filter_map(|lib| {
-                                        if lib.force_rating.is_some() {
-                                            return Some(1usize);
-                                        }
-                                        lib.locations.as_ref().map(|locs| {
+                                    libs.values().map(|lib| {
+                                        let lib_count = usize::from(lib.force_rating.is_some());
+                                        let loc_count = lib.locations.as_ref().map_or(0, |locs| {
                                             locs.values()
                                                 .filter(|loc| loc.force_rating.is_some())
                                                 .count()
-                                        })
+                                        });
+                                        lib_count + loc_count
                                     })
                                 })
                             })

@@ -33,7 +33,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     render_status_bar(state, status_area, frame.buffer_mut());
 
     match state.mode {
-        Mode::FullScreen => {
+        Mode::FullScreen | Mode::Filtering => {
             render_content(state, main_area, frame.buffer_mut());
         }
         _ => {
@@ -49,7 +49,14 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         }
     }
 
-    if state.quit_requested && state.dirty {
+    if state.server_state.delete_requested {
+        Popup::new(
+            " Delete Server ",
+            "Delete this server?",
+            "y=delete  any other key=cancel",
+        )
+        .render(area, frame.buffer_mut());
+    } else if state.quit_requested && state.dirty {
         Popup::new(
             " Unsaved Changes ",
             "Save before quitting?",
@@ -96,7 +103,8 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
             Pane::Content => "↑↓ navigate  Tab sidebar  Enter edit  s save  q quit",
         },
         Mode::Editing => "Enter confirm  Esc cancel",
-        Mode::FullScreen => "↑↓ navigate  Space toggle  Enter confirm  Esc cancel",
+        Mode::FullScreen => "↑↓ navigate  Space toggle  / filter  Enter confirm  Esc cancel",
+        Mode::Filtering => "Type to filter  Enter confirm  Esc cancel",
     };
     let dirty_text = if state.dirty {
         Span::styled(

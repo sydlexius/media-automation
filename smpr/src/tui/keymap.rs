@@ -42,6 +42,18 @@ pub fn map_key(mode: Mode, pane: Pane, section: Section, key: KeyEvent) -> Optio
         Mode::Normal => map_normal(pane, section, key),
         Mode::Editing => map_editing(key),
         Mode::FullScreen => map_fullscreen(section, key),
+        Mode::Filtering => map_filtering(key),
+    }
+}
+
+/// In filtering mode, all chars go to text input. Only Enter/Esc escape.
+fn map_filtering(key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Enter => Some(Action::Confirm),
+        KeyCode::Esc => Some(Action::Cancel),
+        KeyCode::Backspace => Some(Action::Backspace),
+        KeyCode::Char(c) => Some(Action::Char(c)),
+        _ => None,
     }
 }
 
