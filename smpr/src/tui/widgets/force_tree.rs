@@ -73,6 +73,8 @@ pub fn init_force_state(state: &mut AppState) {
         cursor: initial_cursor,
         radio_cursor: 0,
         expanded,
+        scroll_offset: 0,
+        view_height: 0,
     };
 
     // Set radio_cursor to match current rating of cursor node
@@ -231,6 +233,7 @@ pub fn render_force_tree(state: &AppState, area: Rect, buf: &mut Buffer) {
     }
 
     let mut y = inner.y;
+    let mut visible_idx: usize = 0;
 
     for (i, node) in state.force_state.nodes.iter().enumerate() {
         if y >= inner.y + inner.height {
@@ -240,6 +243,13 @@ pub fn render_force_tree(state: &AppState, area: Rect, buf: &mut Buffer) {
         if !is_node_visible(&state.force_state, i) {
             continue;
         }
+
+        // Skip nodes before scroll offset
+        if visible_idx < state.force_state.scroll_offset {
+            visible_idx += 1;
+            continue;
+        }
+        visible_idx += 1;
 
         let is_cursor = i == state.force_state.cursor;
         let indent = "  ".repeat(node.depth);

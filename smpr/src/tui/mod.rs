@@ -90,6 +90,10 @@ pub fn run_editor(
     let mut terminal = Terminal::new(backend)?;
 
     loop {
+        // Update view_height from terminal size (minus title, status, borders = 4 rows)
+        let term_height = terminal.size()?.height as usize;
+        state.force_state.view_height = term_height.saturating_sub(4);
+
         terminal.draw(|frame| render::render(frame, &state))?;
 
         let evt = event::poll_event(std::time::Duration::from_millis(100))?;
@@ -242,6 +246,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 }
                 if next < len {
                     state.force_state.cursor = next;
+                    adjust_force_scroll(state);
                 }
             }
         }
@@ -295,6 +300,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 }
                 if !state.force_state.nodes.is_empty() && state.force_state.nodes[prev].depth > 0 {
                     state.force_state.cursor = prev;
+                    adjust_force_scroll(state);
                 }
             }
         }
@@ -346,6 +352,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                     } else {
                         state.force_state.expanded.insert(cursor);
                     }
+                    adjust_force_scroll(state);
                 }
             }
         },
@@ -668,6 +675,45 @@ fn load_field_into_input(state: &mut AppState, label: &str) {
         None => String::new(),
     };
     state.server_state.text_input.set(&text);
+}
+
+/// Adjust scroll_offset so the cursor stays visible in the force-rate tree.
+/// Uses `view_height` stored from the last terminal size query.
+fn adjust_force_scroll(state: &mut AppState) {
+    // Count total visible nodes and cursor's position among them
+    let mut visible_pos: usize = 0;
+    let mut total_visible: usize = 0;
+    let mut found_cursor = false;
+    for (i, _node) in state.force_state.nodes.iter().enumerate() {
+        if !widgets::force_tree::is_node_visible(&state.force_state, i) {
+            continue;
+        }
+        if i == state.force_state.cursor && !found_cursor {
+            found_cursor = true;
+            visible_pos = total_visible;
+        }
+        total_visible += 1;
+    }
+
+    // Use stored view_height, or fall back to a conservative default
+    let page_size = if state.force_state.view_height > 0 {
+        state.force_state.view_height
+    } else {
+        15
+    };
+
+    // Clamp scroll_offset to valid range
+    let max_scroll = total_visible.saturating_sub(page_size);
+    if state.force_state.scroll_offset > max_scroll {
+        state.force_state.scroll_offset = max_scroll;
+    }
+
+    // Ensure cursor is within the visible window
+    if visible_pos < state.force_state.scroll_offset {
+        state.force_state.scroll_offset = visible_pos;
+    } else if visible_pos >= state.force_state.scroll_offset + page_size {
+        state.force_state.scroll_offset = visible_pos - page_size + 1;
+    }
 }
 
 fn save(state: &mut AppState) -> Result<(), TuiError> {

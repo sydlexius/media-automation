@@ -139,6 +139,9 @@ pub struct ForceTreeState {
     pub cursor: usize,
     pub radio_cursor: usize,
     pub expanded: std::collections::HashSet<usize>,
+    pub scroll_offset: usize,
+    /// Last rendered pane height (set by render, used by scroll adjustment).
+    pub view_height: usize,
 }
 
 pub const RATING_OPTIONS: [Option<&str>; 4] = [None, Some("G"), Some("PG-13"), Some("R")];
