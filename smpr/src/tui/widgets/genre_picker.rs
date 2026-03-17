@@ -1,4 +1,4 @@
-use crate::tui::app::{AppState, GenrePickerState};
+use crate::tui::app::{AppState, GenrePickerState, Mode};
 use crate::wizard::library::DEFAULT_G_GENRES;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -92,6 +92,12 @@ pub fn render_genre_picker(state: &AppState, area: Rect, buf: &mut Buffer) {
         return;
     }
 
+    // In normal mode, show a summary view (not the full picker)
+    if state.mode != Mode::FullScreen && state.mode != Mode::Filtering {
+        render_genre_summary(state, inner, buf);
+        return;
+    }
+
     let filter_height = u16::from(state.genre_state.filter_active);
     let constraints = if filter_height > 0 {
         vec![Constraint::Length(1), Constraint::Fill(1)]
@@ -121,6 +127,64 @@ pub fn render_genre_picker(state: &AppState, area: Rect, buf: &mut Buffer) {
 
     render_available_column(state, left_area, buf);
     render_selected_column(state, right_area, buf);
+}
+
+/// Summary view shown in normal mode — reads directly from config.
+fn render_genre_summary(state: &AppState, area: Rect, buf: &mut Buffer) {
+    let genres: Vec<&str> = state
+        .config
+        .detection
+        .as_ref()
+        .and_then(|d| d.g_genres.as_ref())
+        .and_then(|g| g.genres.as_ref())
+        .map(|v| v.iter().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+
+    if genres.is_empty() {
+        Paragraph::new("  No genres configured. Press Enter to edit.")
+            .style(Style::default().fg(Color::DarkGray))
+            .render(area, buf);
+        return;
+    }
+
+    let header = Line::from(vec![Span::styled(
+        format!(
+            "  {} genre{} configured:",
+            genres.len(),
+            if genres.len() == 1 { "" } else { "s" }
+        ),
+        Style::default().fg(Color::White),
+    )]);
+    buf.set_line(area.x, area.y, &header, area.width);
+
+    let mut y = area.y + 2;
+    let tag_bg = Color::Rgb(45, 74, 34);
+    let mut x = area.x + 2;
+
+    for genre in &genres {
+        let tag = format!(" {genre} ");
+        let len = tag.len() as u16;
+        if x + len > area.x + area.width {
+            y += 1;
+            x = area.x + 2;
+            if y >= area.y + area.height {
+                break;
+            }
+        }
+        buf.set_string(x, y, &tag, Style::default().fg(Color::Green).bg(tag_bg));
+        x += len + 1;
+    }
+
+    // Hint at bottom
+    let hint_y = area.y + area.height.saturating_sub(1);
+    if hint_y > y {
+        buf.set_line(
+            area.x,
+            hint_y,
+            &Line::styled("  Enter to edit", Style::default().fg(Color::DarkGray)),
+            area.width,
+        );
+    }
 }
 
 fn render_available_column(state: &AppState, area: Rect, buf: &mut Buffer) {
@@ -204,18 +268,12 @@ fn render_available_column(state: &AppState, area: Rect, buf: &mut Buffer) {
 
 fn render_selected_column(state: &AppState, area: Rect, buf: &mut Buffer) {
     let count = state.genre_state.selected.len();
-    let header = Line::from(vec![
-        Span::styled(
-            " Selected",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  {count} selected"),
-            Style::default().fg(Color::Green),
-        ),
-    ]);
+    let header = Line::from(vec![Span::styled(
+        format!(" {count} Selected"),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    )]);
     buf.set_line(area.x, area.y, &header, area.width);
 
     let list_area = Rect {
