@@ -18,7 +18,8 @@ pub enum Action {
     Cancel,
     Add,
     Delete,
-    Refresh, // r — scan server libraries
+    Refresh,         // r — scan server libraries
+    SetRating(char), // n/g/p/r — direct rating set in force-rate tree
 
     // Full-screen
     Toggle,
@@ -80,11 +81,26 @@ fn map_normal(pane: Pane, section: Section, key: KeyEvent) -> Option<Action> {
                 _ => None,
             },
             KeyCode::Char('d') => match section {
-                Section::Servers | Section::Detection => Some(Action::Delete),
+                Section::Servers | Section::Detection | Section::ForceRatings => {
+                    Some(Action::Delete)
+                }
                 _ => None,
             },
             KeyCode::Char('r') => match section {
                 Section::Servers => Some(Action::Refresh),
+                Section::ForceRatings => Some(Action::SetRating('r')),
+                _ => None,
+            },
+            KeyCode::Char('n') => match section {
+                Section::ForceRatings => Some(Action::SetRating('n')),
+                _ => None,
+            },
+            KeyCode::Char('g') => match section {
+                Section::ForceRatings => Some(Action::SetRating('g')),
+                _ => None,
+            },
+            KeyCode::Char('p') => match section {
+                Section::ForceRatings => Some(Action::SetRating('p')),
                 _ => None,
             },
             _ => None,
@@ -120,13 +136,8 @@ fn map_fullscreen(section: Section, key: KeyEvent) -> Option<Action> {
             Section::Genres => Some(Action::StartFilter),
             _ => None,
         },
-        KeyCode::Char('d') => match section {
-            Section::ForceRatings => Some(Action::Delete),
-            _ => None,
-        },
         KeyCode::Enter => match section {
             Section::Genres => Some(Action::Confirm),
-            Section::ForceRatings => Some(Action::ExpandCollapse),
             _ => Some(Action::Confirm),
         },
         KeyCode::Backspace => Some(Action::Backspace),

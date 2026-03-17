@@ -79,6 +79,9 @@ pub fn run_editor(
     let mut state = AppState::new(config, env_keys, config_path, env_path);
     state.read_only = read_only;
 
+    // Initialize force tree from config at startup
+    widgets::force_tree::init_force_state(&mut state);
+
     enable_raw_mode()?;
     execute!(std::io::stdout(), EnterAlternateScreen)?;
     let _guard = TerminalGuard;
@@ -216,7 +219,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                     filtered.len().saturating_sub(1)
                 };
                 state.genre_state.cursor = (state.genre_state.cursor + 1).min(max);
-            } else if state.section == Section::ForceRatings && state.mode == Mode::FullScreen {
+            } else if state.section == Section::ForceRatings {
                 let len = state.force_state.nodes.len();
                 let mut next = state.force_state.cursor + 1;
                 while next < len {
@@ -233,9 +236,6 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 }
                 if next < len {
                     state.force_state.cursor = next;
-                    state.force_state.radio_cursor = widgets::force_tree::rating_to_index(
-                        &state.force_state.nodes[next].force_rating,
-                    );
                 }
             }
         }
@@ -264,16 +264,19 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 }
             } else if state.section == Section::Genres && state.mode == Mode::FullScreen {
                 state.genre_state.cursor = state.genre_state.cursor.saturating_sub(1);
-            } else if state.section == Section::ForceRatings && state.mode == Mode::FullScreen {
+            } else if state.section == Section::ForceRatings {
                 let mut prev = state.force_state.cursor.saturating_sub(1);
                 loop {
+                    if state.force_state.nodes.is_empty() {
+                        break;
+                    }
                     let node = &state.force_state.nodes[prev];
                     if node.depth == 0 && prev > 0 {
                         prev -= 1;
                         continue;
                     }
                     if node.depth == 0 {
-                        break; // at start, can't go further
+                        break;
                     }
                     if !widgets::force_tree::is_node_visible(&state.force_state, prev) {
                         if prev == 0 {
@@ -284,11 +287,8 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                     }
                     break;
                 }
-                if state.force_state.nodes[prev].depth > 0 {
+                if !state.force_state.nodes.is_empty() && state.force_state.nodes[prev].depth > 0 {
                     state.force_state.cursor = prev;
-                    state.force_state.radio_cursor = widgets::force_tree::rating_to_index(
-                        &state.force_state.nodes[prev].force_rating,
-                    );
                 }
             }
         }
@@ -330,8 +330,17 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 state.mode = Mode::FullScreen;
             }
             Section::ForceRatings => {
-                widgets::force_tree::init_force_state(state);
-                state.mode = Mode::FullScreen;
+                // Enter on a library node = expand/collapse
+                let cursor = state.force_state.cursor;
+                if let Some(node) = state.force_state.nodes.get(cursor)
+                    && node.is_library
+                {
+                    if state.force_state.expanded.contains(&cursor) {
+                        state.force_state.expanded.remove(&cursor);
+                    } else {
+                        state.force_state.expanded.insert(cursor);
+                    }
+                }
             }
         },
 
@@ -523,8 +532,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
             {
                 // Request confirmation before deleting
                 state.server_state.delete_requested = true;
-            } else if state.section == Section::ForceRatings && state.mode == Mode::FullScreen {
-                // Delete a library or location from the force-rate tree
+            } else if state.section == Section::ForceRatings {
                 delete_force_tree_node(state);
             }
         }
@@ -532,6 +540,8 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
         Action::Refresh => {
             if state.section == Section::Servers && state.mode == Mode::Normal {
                 scan_server_libraries(state);
+                // Rebuild force tree since libraries changed
+                widgets::force_tree::init_force_state(state);
             }
         }
 
@@ -571,18 +581,21 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                     widgets::genre_picker::sync_genres_to_config(state);
                     state.mark_dirty();
                 }
-            } else if state.section == Section::ForceRatings && state.mode == Mode::FullScreen {
+            }
+        }
+        Action::NextOption => {}
+        Action::PrevOption => {}
+
+        Action::SetRating(ch) => {
+            if state.section == Section::ForceRatings {
+                state.force_state.radio_cursor = match ch {
+                    'n' => 0,
+                    'g' => 1,
+                    'p' => 2,
+                    'r' => 3,
+                    _ => 0,
+                };
                 widgets::force_tree::apply_force_rating(state);
-            }
-        }
-        Action::NextOption => {
-            if state.section == Section::ForceRatings && state.mode == Mode::FullScreen {
-                state.force_state.radio_cursor = (state.force_state.radio_cursor + 1).min(3);
-            }
-        }
-        Action::PrevOption => {
-            if state.section == Section::ForceRatings && state.mode == Mode::FullScreen {
-                state.force_state.radio_cursor = state.force_state.radio_cursor.saturating_sub(1);
             }
         }
         Action::StartFilter => {
@@ -604,23 +617,7 @@ fn handle_action(state: &mut app::AppState, action: keymap::Action) {
                 state.genre_state.cursor = (state.genre_state.cursor + 10).min(max);
             }
         }
-        Action::ExpandCollapse => {
-            if state.section == Section::ForceRatings && state.mode == Mode::FullScreen {
-                let cursor = state.force_state.cursor;
-                if state
-                    .force_state
-                    .nodes
-                    .get(cursor)
-                    .is_some_and(|n| n.is_library)
-                {
-                    if state.force_state.expanded.contains(&cursor) {
-                        state.force_state.expanded.remove(&cursor);
-                    } else {
-                        state.force_state.expanded.insert(cursor);
-                    }
-                }
-            }
-        }
+        Action::ExpandCollapse => {}
     }
 }
 

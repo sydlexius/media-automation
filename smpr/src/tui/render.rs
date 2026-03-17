@@ -104,14 +104,14 @@ fn render_status_bar(state: &AppState, area: Rect, buf: &mut Buffer) {
                 crate::tui::app::Section::Servers => {
                     "↑↓ navigate  Enter edit  a add  d delete  r scan libs  s save  q quit"
                 }
+                crate::tui::app::Section::ForceRatings => {
+                    "↑↓ navigate  n=None g=G p=PG-13 r=R  Enter expand  d delete  s save  q quit"
+                }
                 _ => "↑↓ navigate  Tab sidebar  Enter edit  s save  q quit",
             },
         },
         Mode::Editing => "Enter confirm  Esc cancel",
         Mode::FullScreen => match state.section {
-            crate::tui::app::Section::ForceRatings => {
-                "↑↓ navigate  ←→ rating  Space apply  Enter expand  d delete  Esc done"
-            }
             crate::tui::app::Section::Genres => {
                 "↑↓ navigate  Space toggle  / filter  Enter confirm  Esc cancel"
             }

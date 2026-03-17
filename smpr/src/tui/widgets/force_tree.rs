@@ -1,5 +1,5 @@
 use crate::config::RawConfig;
-use crate::tui::app::{AppState, ForceTreeState, Mode, RATING_OPTIONS, TreeNode};
+use crate::tui::app::{AppState, ForceTreeState, RATING_OPTIONS, TreeNode};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -218,23 +218,12 @@ pub fn render_force_tree(state: &AppState, area: Rect, buf: &mut Buffer) {
     let inner = block.inner(area);
     block.render(area, buf);
 
-    // In normal mode, show a summary from config (not from ForceTreeState)
-    if state.mode != Mode::FullScreen {
-        let nodes = build_tree(&state.config);
-        if nodes.is_empty() {
-            Paragraph::new("  No servers with libraries configured.\n  Press 'r' on a server to scan libraries.")
-                .style(Style::default().fg(Color::DarkGray))
-                .render(inner, buf);
-        } else {
-            render_tree_summary(&nodes, inner, buf);
-        }
-        return;
-    }
-
     if state.force_state.nodes.is_empty() {
-        Paragraph::new("  No servers with libraries configured.")
-            .style(Style::default().fg(Color::DarkGray))
-            .render(inner, buf);
+        Paragraph::new(
+            "  No servers with libraries configured.\n  Press 'r' on a server to scan libraries.",
+        )
+        .style(Style::default().fg(Color::DarkGray))
+        .render(inner, buf);
         return;
     }
 
