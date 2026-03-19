@@ -11,9 +11,82 @@ reviews:
   request_changes_workflow: true
   high_level_summary: true
   poem: false
-  review_instructions: |
-    After completing your full review, end your summary comment
-    with the exact phrase on its own line:
-    "This is the Way."
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Rust CLI project for Emby/Jellyfin parental rating management. Key conventions:
+        - Error enums use hand-rolled Display/Error impls (no thiserror or anyhow)
+        - Config resolution: config path (CLI > CWD > platform config dir), then TOML
+          parse, then .env loading, then server resolution (CLI one-off > TOML sections
+          with env var API keys), detection (TOML > defaults), overwrite (CLI > TOML >
+          default true)
+        - API auth: X-Emby-Token (Emby) or X-MediaBrowser-Token (Jellyfin)
+        - Tests run with --test-threads=1 (config tests mutate process-global env vars)
+        - UAT tests are gated by SMPR_UAT_TEST=1 env var with early return (not #[ignore])
+        After completing your full review, end your summary comment
+        with the exact phrase on its own line:
+        "This is the Way."
+    - path: "smpr/src/server/**/*.rs"
+      instructions: |
+        HTTP client code that talks to Emby/Jellyfin APIs. Check for:
+        - URL encoding for user-provided IDs (path traversal risk)
+        - Auth header hostname injection
+        - Response body handling consistency (truncation, draining)
+        - Error types that mask auth failures (401/403) as generic HTTP errors
+        - IsExternal field default values matching actual API behavior
+    - path: "smpr/src/config/**/*.rs"
+      instructions: |
+        Config loading with process-global env var mutation. Check for:
+        - Test isolation: env vars set in one test leaking to another
+        - TOML key sanitization (user-provided server labels become TOML keys)
+        - Config path resolution edge cases (empty string, ".", "..", directories)
+        - API key handling: never log, never include in error messages
+        - Overwrite behavior string-matching correctness
+    - path: "smpr/src/rating/**/*.rs"
+      instructions: |
+        Workflow orchestration that processes items in batches. Check for:
+        - Silent skipping: items skipped without warning or logging
+        - Error aggregation: individual item failures should not abort the batch
+        - Rating action correctness: verify decide_rating_action and
+          decide_clear_action handle all edge cases
+    - path: "smpr/src/wizard/**/*.rs"
+      instructions: |
+        Interactive setup wizard using inquire crate. Check for:
+        - Input validation: URLs, API keys, server labels
+        - Atomic file writes: partial config/env writes leaving inconsistent state
+        - File permission restrictions on credential files (.env)
+        - Overwrite confirmation before clobbering existing config
+    - path: "**/*.rs"
+      instructions: |
+        General Rust review. Check for:
+        - unwrap() or expect() in non-test code
+        - ? operator that silently returns early without logging
+        - Cross-platform path handling (path separators, case sensitivity)
+        - Unicode handling (byte length vs character/grapheme width)
+    - path: "smpr/src/**/*test*"
+      instructions: |
+        Test code. Check for:
+        - Test isolation with process-global env vars
+        - Non-deterministic behavior (unstable sort, timing)
+        - Assertion specificity (concrete values, not just is_ok/is_some)
+        - Error path coverage
+  tools:
+    shellcheck:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    gitleaks:
+      enabled: true
+knowledge_base:
+  opt_out: false
+  learnings:
+    scope: auto
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CLAUDE.md"
+      - ".github/copilot-instructions.md"
 chat:
   auto_reply: true
