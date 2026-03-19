@@ -13,8 +13,11 @@ reviews:
   poem: false
   instructions: |
     Rust CLI project for Emby/Jellyfin parental rating management. Key conventions:
-    - Error handling via thiserror enums and ? operator
-    - Config resolution: CLI flags > TOML > env vars > defaults
+    - Error enums use hand-rolled Display/Error impls (no thiserror or anyhow)
+    - Config resolution: config path (CLI > CWD > platform config dir), then TOML
+      parse, then .env loading, then server resolution (CLI one-off > TOML sections
+      with env var API keys), detection (TOML > defaults), overwrite (CLI > TOML >
+      default true)
     - API auth: X-Emby-Token (Emby) or X-MediaBrowser-Token (Jellyfin)
     - Tests run with --test-threads=1 (config tests mutate process-global env vars)
     - #[ignore] on UAT tests is intentional (require live server)

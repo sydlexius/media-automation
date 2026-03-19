@@ -18,9 +18,9 @@ detection (R / PG-13), and sets `OfficialRating` on matching audio tracks.
 
 ## Rust conventions
 
-- Prefer `thiserror` for error enum definitions
+- Error enums use hand-rolled `Display`/`Error` impls (no `thiserror` or `anyhow`)
 - Prefer explicit error handling over `.unwrap()` in non-test code
-- Prefer `?` with context via `.map_err()` or `anyhow::Context`
+- Prefer `?` with context via `.map_err()` and project-specific error types
 - Test code uses `--test-threads=1` (config tests mutate process-global env vars)
 
 ## Files to skip
