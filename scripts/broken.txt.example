@@ -1,0 +1,11 @@
+# Sample input for clean-broken-albums.sh
+#
+# One album directory per line. Audio files in each directory will be removed
+# (sidecars like .lrc, .jpg, cover.png are preserved). Blank lines and lines
+# starting with # are ignored.
+#
+# Copy this to broken.txt (which is gitignored) before running the script,
+# or pass --input <path> to point at a different file.
+
+/mnt/user/Music/Artist Name/Album Name/
+/mnt/user/Music/Another Artist/Another Album/

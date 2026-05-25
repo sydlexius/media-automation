@@ -2,6 +2,18 @@
 .env*
 !.env.example
 
+# OS / editor noise
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# scripts/clean-broken-albums.sh input: user-specific album paths; not committed
+/broken.txt
+/scripts/broken.txt
+
 # Rust
 smpr/target/
 
