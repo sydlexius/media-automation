@@ -147,6 +147,19 @@ API_TIMEOUT = 120  # seconds
 RSGAIN_BIN = '/mnt/vms/utils/rsgain/rsgain'
 BPMTAGGER_MARKER = 'bpmtag.py'
 
+
+def resolve_rsgain():
+    """Return the rsgain binary to execute, or None if unavailable.
+
+    Prefers the hardcoded RSGAIN_BIN (a manually-installed binary that is not
+    on PATH) when it exists and is executable, else falls back to PATH. Used by
+    BOTH the dependency preflight and run_rsgain so detection and execution
+    agree on the same binary instead of checking PATH but running RSGAIN_BIN.
+    """
+    if os.path.isfile(RSGAIN_BIN) and os.access(RSGAIN_BIN, os.X_OK):
+        return RSGAIN_BIN
+    return shutil.which('rsgain')
+
 log = logging.getLogger('lidarr-import')
 
 # ---------------------------------------------------------------------------
@@ -227,7 +240,7 @@ def build_dependencies():
             needed_when=lambda args, scan: scan['animated'],
         ),
         Dependency(
-            'rsgain', 'binary', lambda: _have('rsgain'),
+            'rsgain', 'binary', lambda: resolve_rsgain() is not None,
             'ReplayGain tagging',
             {'brew': 'rsgain', 'un-get': 'rsgain'},
             needed_when=lambda args, scan: not args.no_rsgain,
@@ -1657,7 +1670,11 @@ def run_rsgain(import_path: str, dry_run: bool = False) -> bool:
 
     Returns True on success, False on failure.
     """
-    cmd = [RSGAIN_BIN, 'easy', '-l', '-18', '-S', '-m', 'MAX', import_path]
+    binary = resolve_rsgain()
+    if binary is None:
+        log.error("rsgain binary not found (looked at %s and PATH)", RSGAIN_BIN)
+        return False
+    cmd = [binary, 'easy', '-l', '-18', '-S', '-m', 'MAX', import_path]
     if dry_run:
         log.info("[dry run] Would run: %s", ' '.join(cmd))
         return True
@@ -1674,7 +1691,7 @@ def run_rsgain(import_path: str, dry_run: bool = False) -> bool:
         log.info("rsgain completed successfully")
         return True
     except FileNotFoundError:
-        log.error("rsgain binary not found at %s", RSGAIN_BIN)
+        log.error("rsgain binary not found at %s", binary)
         return False
     except subprocess.TimeoutExpired:
         log.warning("rsgain timed out after 1800s")

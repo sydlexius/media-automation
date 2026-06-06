@@ -50,10 +50,12 @@ album's destination and runs quality-gating so FLAC isn't replaced by MP3
 (`--ignore-quality` to bypass, `--auto-quality` to auto-resolve ambiguous
 cases). Empty source directories are cleaned up after a successful import.
 
-Stdlib-only Python 3.6+ — no `pip install` needed. Optional tools (ImageMagick,
-ffmpeg, rsgain, and pip libraries) are detected at startup by a dependency
-preflight that can install them for you; see
-[tools/lidarr/README.md](tools/lidarr/README.md) for macOS and Unraid setup.
+Python 3.6+ with no *required* pip dependencies for a basic import. Optional
+features (BPM tagging via `mutagen`/`essentia`, TIFF/WEBP artwork conversion via
+ImageMagick, animated art via `ffmpeg`, ReplayGain via `rsgain`) are detected at
+startup by a dependency preflight that can install them for you; see
+[tools/lidarr/README.md](tools/lidarr/README.md) for the full dependency matrix
+and macOS/Unraid setup.
 
 ### [tools/emby/emby_bif_audit.py](tools/emby/emby_bif_audit.py) — Emby Chapter Thumbnail Audit
 
