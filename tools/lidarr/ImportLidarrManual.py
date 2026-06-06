@@ -2770,6 +2770,26 @@ def process_album_dir(client: LidarrClient, album_dir: str,
 # Main
 # ---------------------------------------------------------------------------
 
+def redact_url(url: str) -> str:
+    """Return url with any userinfo (user:pass@) stripped, safe for logging.
+
+    A Lidarr URL normally carries no credentials (auth is the X-Api-Key header),
+    but a user could embed `user:pass@` in the configured URL. Strip it before
+    the URL reaches any log sink so embedded credentials never appear in output.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return url
+    if parts.username is None and parts.password is None:
+        return url
+    host = parts.hostname or ''
+    if parts.port is not None:
+        host = '%s:%d' % (host, parts.port)
+    return urllib.parse.urlunsplit(
+        (parts.scheme, host, parts.path, parts.query, parts.fragment))
+
+
 def load_dotenv(env_path: str) -> dict[str, str]:
     """Parse a .env file into a dict. Handles KEY=VALUE, quotes, comments."""
     env = {}
@@ -3159,12 +3179,12 @@ def main():
     try:
         status = client.system_status()
         if not status:
-            log.error("Empty response from Lidarr at %s", args.url)
+            log.error("Empty response from Lidarr at %s", redact_url(args.url))
             sys.exit(1)
         log.info("Connected to Lidarr %s (%s)", status.get('version'),
                  status.get('branch'))
     except Exception as exc:
-        log.error("Cannot connect to Lidarr at %s: %s", args.url, exc)
+        log.error("Cannot connect to Lidarr at %s: %s", redact_url(args.url), exc)
         sys.exit(1)
 
     # Pre-flight: add missing albums to library

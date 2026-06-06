@@ -561,5 +561,28 @@ class TestSetupPipPackages(unittest.TestCase):
         self.assertEqual(pkgs, sorted(pkgs))
 
 
+class TestRedactUrl(unittest.TestCase):
+    def test_strips_userinfo(self):
+        self.assertEqual(
+            mod.redact_url('http://user:pass@host:8096/api'),
+            'http://host:8096/api')
+
+    def test_strips_username_only(self):
+        self.assertEqual(
+            mod.redact_url('http://user@host:8096'), 'http://host:8096')
+
+    def test_passthrough_clean_url(self):
+        for url in ('http://localhost:8686', 'https://lidarr.example.com/x?y=1'):
+            self.assertEqual(mod.redact_url(url), url)
+
+    def test_no_credentials_leak_in_output(self):
+        self.assertNotIn('secret', mod.redact_url('http://u:secret@h:8096'))
+
+    def test_handles_garbage_without_raising(self):
+        # never raises; returns something for non-URL input
+        self.assertIsInstance(mod.redact_url('not a url'), str)
+        self.assertIsInstance(mod.redact_url(''), str)
+
+
 if __name__ == '__main__':
     unittest.main()
