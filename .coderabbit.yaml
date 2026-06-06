@@ -1,7 +1,11 @@
 language: en-US
 reviews:
   auto_review:
-    enabled: true
+    # Manual-only: trigger reviews with `@coderabbitai review`. Leaving this
+    # true would override the org-level "no auto-reviews" setting (a repo
+    # .coderabbit.yaml takes precedence over org dashboard settings), so keep
+    # it false to honor the org default.
+    enabled: false
     drafts: false
     auto_pause_after_reviewed_commits: 0
   path_filters:
