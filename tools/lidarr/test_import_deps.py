@@ -307,5 +307,30 @@ class TestPreflightDriver(unittest.TestCase):
         self.assertEqual(called, [])
 
 
+class TestScriptDir(unittest.TestCase):
+    def test_resolves_through_symlink(self):
+        # Real file and symlink live in SEPARATE dirs, so a revert to abspath
+        # (which would return the symlink's dir) fails this test.
+        real_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, real_dir, ignore_errors=True)
+        real_file = os.path.join(real_dir, 'ImportLidarrManual.py')
+        open(real_file, 'w').close()
+        link_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, link_dir, ignore_errors=True)
+        link = os.path.join(link_dir, 'il')
+        os.symlink(real_file, link)
+        # Invoked via the symlink, _script_dir must point at the REAL file's dir,
+        # not the symlink's dir.
+        self.assertEqual(mod._script_dir(link), os.path.realpath(real_dir))
+        self.assertNotEqual(mod._script_dir(link), os.path.realpath(link_dir))
+
+    def test_direct_path(self):
+        real_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, real_dir, ignore_errors=True)
+        real_file = os.path.join(real_dir, 'ImportLidarrManual.py')
+        open(real_file, 'w').close()
+        self.assertEqual(mod._script_dir(real_file), os.path.realpath(real_dir))
+
+
 if __name__ == '__main__':
     unittest.main()
