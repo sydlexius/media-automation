@@ -10,6 +10,9 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Binaries fetched by `ImportLidarrManual.py --setup` (e.g. rsgain)
+/tools/lidarr/bin/
+
 # scripts/clean-broken-albums.sh input: user-specific album paths; not committed
 /broken.txt
 /scripts/broken.txt

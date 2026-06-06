@@ -27,10 +27,14 @@ Requirements: Python 3.6+ (stdlib only, no pip packages needed)
 Configuration (checked in order):
     1. CLI args: --url and --api-key
     2. Config file: --config /path/to/LidarrConfig.json
-    3. .env file in script directory (LIDARR_URL and LIDARR_API_KEY)
+    3. .env file: --env-file > ${XDG_CONFIG_HOME:-~/.config}/importlidarr/.env
+       > next-to-script .env > ./.env  (LIDARR_URL and LIDARR_API_KEY)
     4. Environment variables: LIDARR_URL and LIDARR_API_KEY
 
 Usage:
+    # First-time bootstrap (deps, il symlink, .env, Unraid boot script):
+    python3 ImportLidarrManual.py --setup
+
     # Simplest: put a .env file next to this script, then just:
     python3 ImportLidarrManual.py /share/Downloads/Finished/Manual/Music
 
@@ -46,6 +50,7 @@ Usage:
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import signal
@@ -54,10 +59,16 @@ import time
 import shlex
 import shutil
 import struct
+import getpass
+import hashlib
+import tarfile
+import zipfile
+import tempfile
 import subprocess
 import logging
 import argparse
 import threading
+import platform as _platform_mod
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -147,17 +158,65 @@ API_TIMEOUT = 120  # seconds
 RSGAIN_BIN = '/mnt/vms/utils/rsgain/rsgain'
 BPMTAGGER_MARKER = 'bpmtag.py'
 
+# Directory of the real script file (realpath, not abspath, so an invocation
+# via the `il` symlink resolves to where sibling files such as `.env` and
+# `bin/rsgain` actually live, not /usr/local/bin).
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+
+# A binary fetched by `--setup` lands here, next to the script on the
+# persistent checkout, so it survives an Unraid reboot with no boot-script
+# entry (resolved via realpath, see SCRIPT_DIR).
+BUNDLED_RSGAIN = os.path.join(SCRIPT_DIR, 'bin', 'rsgain')
+
+# Platforms whose home dir (e.g. Unraid's /root) is RAM-backed and wiped on
+# reboot, so config and fetched binaries must live next to the script instead.
+EPHEMERAL_HOME_PLATFORMS = {'unraid'}
+
+# Statically-runnable binaries we can fetch when no package manager carries
+# them (notably rsgain on Unraid). Each entry is keyed by '<os>-<arch>' as
+# produced by _platform_arch_key(). sha256 is verified against the downloaded
+# bytes before anything is written; `member` is the path inside the archive to
+# extract (the official rsgain releases ship a .tar.xz/.zip, not a raw binary).
+#
+# Source: https://github.com/complexlogic/rsgain/releases/tag/v3.7
+# The macOS builds link only against system frameworks; the Linux build
+# dynamically links FFmpeg, which the dependency table already installs.
+FETCHABLE_BINARIES = {
+    'rsgain': {
+        'linux-x86_64': {
+            'url': 'https://github.com/complexlogic/rsgain/releases/download/'
+                   'v3.7/rsgain-3.7-Linux.tar.xz',
+            'sha256': '28c529f20b822df803ab1bde981ca3256cf58276e5e1d0b8e969faf017842151',
+            'member': 'rsgain-3.7-Linux/rsgain',
+        },
+        'darwin-arm64': {
+            'url': 'https://github.com/complexlogic/rsgain/releases/download/'
+                   'v3.7/rsgain-3.7-macOS-arm64.zip',
+            'sha256': '481f192354723c54e9605e3c9a9cf453b7cf87eed35b8e92fed5efdfa3ac4e86',
+            'member': 'rsgain-3.7-macOS-arm64/rsgain',
+        },
+        'darwin-x86_64': {
+            'url': 'https://github.com/complexlogic/rsgain/releases/download/'
+                   'v3.7/rsgain-3.7-macOS-x86_64.zip',
+            'sha256': '5e7f9655ff38ece783588b7210feae3a1eef1f9f41f3e9961c42f31cd53b4f17',
+            'member': 'rsgain-3.7-macOS-x86_64/rsgain',
+        },
+    },
+}
+
 
 def resolve_rsgain():
     """Return the rsgain binary to execute, or None if unavailable.
 
-    Prefers the hardcoded RSGAIN_BIN (a manually-installed binary that is not
-    on PATH) when it exists and is executable, else falls back to PATH. Used by
-    BOTH the dependency preflight and run_rsgain so detection and execution
-    agree on the same binary instead of checking PATH but running RSGAIN_BIN.
+    Resolution order: a bundled `bin/rsgain` fetched by `--setup` > the
+    hardcoded RSGAIN_BIN (a manually-installed binary not on PATH) > PATH.
+    Used by BOTH the dependency preflight and run_rsgain so detection and
+    execution agree on the same binary instead of checking PATH but running
+    a different one.
     """
-    if os.path.isfile(RSGAIN_BIN) and os.access(RSGAIN_BIN, os.X_OK):
-        return RSGAIN_BIN
+    for candidate in (BUNDLED_RSGAIN, RSGAIN_BIN):
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
     return shutil.which('rsgain')
 
 log = logging.getLogger('lidarr-import')
@@ -167,15 +226,23 @@ log = logging.getLogger('lidarr-import')
 # ---------------------------------------------------------------------------
 
 
-def detect_platform(platform=None, unraid_marker='/etc/unraid-version'):
+def detect_platform(platform=None, unraid_marker='/etc/unraid-version',
+                    kernel_release=None):
     """Return 'mac' | 'unraid' | 'linux' | 'unknown'.
 
-    Args are injectable for testing; defaults read the real environment.
+    Unraid is detected by EITHER the /etc/unraid-version marker OR an
+    '-Unraid'-suffixed kernel release (its kernels carry that suffix), so a
+    booted-but-marker-missing array still resolves correctly. Args are
+    injectable for testing; defaults read the real environment, guarded by
+    hasattr(os, 'uname') so the module stays importable on non-POSIX hosts.
     """
     plat = platform if platform is not None else sys.platform
     if plat == 'darwin':
         return 'mac'
-    if os.path.exists(unraid_marker):
+    if kernel_release is None and hasattr(os, 'uname'):
+        kernel_release = os.uname().release
+    if os.path.exists(unraid_marker) or (
+            kernel_release and 'unraid' in kernel_release.lower()):
         return 'unraid'
     if plat.startswith('linux'):
         return 'linux'
@@ -331,6 +398,103 @@ def install_dependency(dep, platform):
     return True
 
 
+def _verify_sha256(data, expected_sha256):
+    """True when sha256(data) matches expected (case-insensitive hex). Pure."""
+    return hashlib.sha256(data).hexdigest() == expected_sha256.strip().lower()
+
+
+def _extract_member(data, url, member):
+    """Return one member's bytes from an in-memory archive, or None.
+
+    Archive type is inferred from the URL suffix. Supports .zip and tar
+    variants (.tar.xz etc.); tarfile's 'r:*' auto-detects the compression.
+    """
+    lower = url.lower()
+    if lower.endswith('.zip'):
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            return zf.read(member)
+    if '.tar' in lower:
+        with tarfile.open(fileobj=io.BytesIO(data), mode='r:*') as tf:
+            extracted = tf.extractfile(member)
+            return extracted.read() if extracted is not None else None
+    return None
+
+
+def download_binary(name, url, sha256, dest_dir, member=None):
+    """Fetch a binary to dest_dir/name, verifying sha256 first. Non-fatal.
+
+    Downloads to memory, verifies the checksum against the raw bytes BEFORE
+    touching disk, then (for archives) extracts `member` and writes it
+    atomically with the executable bit set. Returns the destination path on
+    success or False on any download/checksum/extraction failure.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=120) as resp:  # noqa: S310
+            data = resp.read()
+    except Exception as exc:
+        log.warning("  Could not download %s from %s: %s", name, url, exc)
+        return False
+    if not _verify_sha256(data, sha256):
+        log.error("  Checksum mismatch for %s - discarding download "
+                  "(expected %s, got %s, %d bytes)",
+                  name, sha256.strip().lower(), hashlib.sha256(data).hexdigest(),
+                  len(data))
+        return False
+    try:
+        payload = _extract_member(data, url, member) if member else data
+    except (tarfile.TarError, zipfile.BadZipFile, KeyError) as exc:
+        log.error("  Could not extract %s from %s archive: %s", member, name, exc)
+        return False
+    if payload is None:
+        log.error("  Archive for %s did not contain %s", name, member)
+        return False
+    dest = os.path.join(dest_dir, name)
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=dest_dir)
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                f.write(payload)
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, dest)
+        except OSError:
+            # Don't leave a half-written temp file in the persistent bin/ dir.
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError as exc:
+        log.warning("  Could not install fetched %s: %s", name, exc)
+        return False
+    return dest
+
+
+def _platform_arch_key():
+    """'<os>-<arch>' key into FETCHABLE_BINARIES, e.g. 'linux-x86_64'."""
+    os_part = 'darwin' if sys.platform == 'darwin' else 'linux'
+    return '%s-%s' % (os_part, _platform_mod.machine())
+
+
+def fetch_binary_dependency(name):
+    """Fetch a binary dep from FETCHABLE_BINARIES into SCRIPT_DIR/bin. Non-fatal.
+
+    Returns the installed path, or False when there is no fetchable build for
+    this platform/arch or the download/verify fails.
+    """
+    entry = FETCHABLE_BINARIES.get(name)
+    if not entry:
+        return False
+    key = _platform_arch_key()
+    spec = entry.get(key)
+    if not spec:
+        log.info("  No fetchable %s build for %s", name, key)
+        return False
+    return download_binary(name, spec['url'], spec['sha256'],
+                           os.path.join(SCRIPT_DIR, 'bin'),
+                           member=spec.get('member'))
+
+
 def write_idempotent_block(path, marker, body):
     """Insert or replace a fenced block in a file, identified by marker.
 
@@ -484,6 +648,63 @@ def preflight_dependencies(args, album_dirs, interactive=None):
             write_boot_persistence(installed_pip, script_path)
             ensure_il_symlink(script_path)
 
+    log.info("=" * 60)
+
+
+def run_setup(args):
+    """Stand up persistence independently of any import run.
+
+    Installs the non-optional dependencies (fetching a verified binary when no
+    package manager carries it), scaffolds `.env`, creates the `il` symlink,
+    and on Unraid writes the reboot-survivable boot script. Idempotent and
+    non-fatal: an individual failure is logged and the rest still runs. Unlike
+    the import-time preflight, the symlink and boot persistence are NOT gated
+    on whether pip packages were just installed.
+    """
+    interactive = sys.stdin.isatty()
+    platform = detect_platform()
+    script_path = os.path.realpath(__file__)
+
+    log.info("=" * 60)
+    log.info("SETUP (platform: %s)", platform)
+    log.info("=" * 60)
+
+    deps = build_dependencies()
+    non_optional = [d for d in deps if not d.optional]
+    # pip deps that a reboot would wipe and the boot script must reinstall
+    pip_packages = [d.packages['pip'] for d in non_optional if d.kind == 'pip']
+
+    for dep in non_optional:
+        if dep.check():
+            log.info("Present: %s", dep.name)
+            continue
+        log.info("Missing: %s - enables %s", dep.name, dep.enables)
+        if install_dependency(dep, platform):
+            log.info("  Installed %s", dep.name)
+            continue
+        if dep.kind == 'binary':
+            fetched = fetch_binary_dependency(dep.name)
+            if fetched:
+                log.info("  Fetched %s -> %s", dep.name, fetched)
+            else:
+                log.warning("  Could not install or fetch %s - continuing without it",
+                            dep.name)
+        else:
+            log.warning("  Could not install %s - continuing without it", dep.name)
+
+    env_path = os.path.join(get_config_dir(platform), '.env')
+    scaffold_env_file(env_path, args, interactive)
+
+    # Symlink and boot persistence run unconditionally (decoupled from the
+    # pip-install gate that the import-time preflight uses).
+    ensure_il_symlink(script_path)
+    if platform == 'unraid':
+        write_boot_persistence(pip_packages, script_path)
+    else:
+        log.info("Boot persistence: skipped (only needed on Unraid)")
+
+    log.info("Setup complete. Run `il <music-dir>` (or "
+             "`python3 %s <music-dir>`) to import.", script_path)
     log.info("=" * 60)
 
 
@@ -2580,12 +2801,122 @@ def load_config(config_path: str) -> tuple[str, str]:
     return url, key
 
 
+def xdg_config_dir() -> str:
+    """${XDG_CONFIG_HOME:-~/.config}/importlidarr."""
+    base = os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config')
+    return os.path.join(base, 'importlidarr')
+
+
+def get_config_dir(platform: str) -> str:
+    """Where `--setup` should write `.env`.
+
+    The XDG config dir by default, but next to the script on ephemeral-home
+    platforms (Unraid), where ~/.config is RAM-wiped on reboot and only the
+    persistent checkout survives.
+    """
+    if platform in EPHEMERAL_HOME_PLATFORMS:
+        return SCRIPT_DIR
+    return xdg_config_dir()
+
+
+def env_discovery_paths(args) -> list[str]:
+    """Ordered `.env` candidates, highest precedence first.
+
+    --env-file > XDG `.env` > next-to-script `.env` > CWD `.env`.
+    """
+    paths = []
+    env_file = getattr(args, 'env_file', None)
+    if env_file:
+        paths.append(env_file)
+    paths.append(os.path.join(xdg_config_dir(), '.env'))
+    paths.append(os.path.join(_script_dir(__file__), '.env'))
+    paths.append(os.path.join(os.getcwd(), '.env'))
+    return paths
+
+
+def scaffold_env_file(env_path: str, args, interactive: bool) -> bool:
+    """Create `env_path` with Lidarr credentials. Returns True when written.
+
+    Reads the API key without echo (getpass) and never logs/prints it; writes
+    the file 0600 from creation (os.open) so the secret is never world-readable
+    even briefly. Non-interactive runs take values from --url/--api-key or the
+    LIDARR_* env vars and skip (rather than hang) when they are missing. An
+    existing `.env` is never clobbered without explicit confirmation.
+    """
+    if os.path.exists(env_path):
+        if not interactive:
+            log.info("  .env already exists at %s - leaving it untouched", env_path)
+            return False
+        try:
+            answer = input("  .env exists at %s - overwrite? [y/N] "
+                           % env_path).strip().lower()
+        except EOFError:
+            answer = 'n'
+        if answer not in ('y', 'yes'):
+            log.info("  Keeping existing .env")
+            return False
+
+    url = getattr(args, 'url', None) or os.environ.get('LIDARR_URL', '')
+    api_key = getattr(args, 'api_key', None) or os.environ.get('LIDARR_API_KEY', '')
+    local_path = getattr(args, 'local_path', None) or os.environ.get('LIDARR_LOCAL_PATH', '')
+    remote_path = getattr(args, 'remote_path', None) or os.environ.get('LIDARR_REMOTE_PATH', '')
+
+    if interactive:
+        if not url:
+            try:
+                url = input("  LIDARR_URL (e.g. http://localhost:8686): ").strip()
+            except EOFError:
+                url = ''
+        if not api_key:
+            try:
+                api_key = getpass.getpass("  LIDARR_API_KEY (input hidden): ").strip()
+            except EOFError:
+                api_key = ''
+        if not local_path:
+            try:
+                local_path = input("  LIDARR_LOCAL_PATH (optional, blank to skip): ").strip()
+            except EOFError:
+                local_path = ''
+        if not remote_path:
+            try:
+                remote_path = input("  LIDARR_REMOTE_PATH (optional, blank to skip): ").strip()
+            except EOFError:
+                remote_path = ''
+
+    if not url or not api_key:
+        log.info("  Skipping .env scaffold: need both a URL and an API key "
+                 "(pass --url/--api-key or set LIDARR_URL/LIDARR_API_KEY)")
+        return False
+
+    lines = ['LIDARR_URL=%s' % url, 'LIDARR_API_KEY=%s' % api_key]
+    if local_path:
+        lines.append('LIDARR_LOCAL_PATH=%s' % local_path)
+    if remote_path:
+        lines.append('LIDARR_REMOTE_PATH=%s' % remote_path)
+
+    try:
+        parent = os.path.dirname(env_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        os.chmod(env_path, 0o600)  # tighten even if the file pre-existed with looser perms
+    except OSError as exc:
+        # Stay non-fatal: a config-dir write failure must not abort the rest of
+        # --setup (symlink, boot persistence).
+        log.warning("  Could not write .env at %s: %s", env_path, exc)
+        return False
+    log.info("  Wrote %s (chmod 600)", env_path)  # never logs the API key
+    return True
+
+
 def resolve_settings(args) -> dict[str, str]:
     """
-    Resolve all settings from (in priority order):
-    1. CLI args
-    2. Config file (--config)
-    3. .env file next to this script
+    Resolve all settings in priority order:
+    1. CLI args (--url / --api-key)
+    2. Config file (--config JSON)
+    3. .env file: --env-file > XDG > next-to-script > CWD
     4. Environment variables
     """
     url = args.url
@@ -2597,9 +2928,12 @@ def resolve_settings(args) -> dict[str, str]:
     if not (url and api_key) and args.config:
         url, api_key = load_config(args.config)
 
-    # From .env file in script directory
-    script_dir = _script_dir(__file__)
-    env = load_dotenv(os.path.join(script_dir, '.env'))
+    # From the first existing .env in the discovery order
+    env = {}
+    for candidate in env_discovery_paths(args):
+        if os.path.isfile(candidate):
+            env = load_dotenv(candidate)
+            break
 
     url = url or env.get('LIDARR_URL', '') or os.environ.get('LIDARR_URL', '')
     api_key = (api_key or env.get('LIDARR_API_KEY', '')
@@ -2618,6 +2952,10 @@ def resolve_settings(args) -> dict[str, str]:
 
 
 EXAMPLES = """\
+First-time setup (no import path needed):
+  %(prog)s --setup                                        # install deps, il symlink, boot script, .env
+  %(prog)s --setup --url http://localhost:8686 --api-key KEY  # non-interactive .env scaffold
+
 Basic import:
   %(prog)s /path/to/music                                 # import (uses .env)
   %(prog)s /path/to/music --dry-run                       # preview only
@@ -2650,7 +2988,8 @@ Path mapping (when Lidarr runs in Docker):
 Configuration (checked in order):
   1. CLI args: --url and --api-key
   2. Config file: --config /path/to/LidarrConfig.json
-  3. .env file in script directory (LIDARR_URL and LIDARR_API_KEY)
+  3. .env file: --env-file > ${XDG_CONFIG_HOME:-~/.config}/importlidarr/.env
+     > next-to-script .env > ./.env  (LIDARR_URL and LIDARR_API_KEY)
   4. Environment variables: LIDARR_URL and LIDARR_API_KEY
 """
 
@@ -2666,10 +3005,16 @@ def parse_args():
                    help='Root folder containing Artist/Album/Track subfolders')
     p.add_argument('--config', '-c', metavar='FILE',
                    help='Path to LidarrConfig.json (with LidarrUrl and ApiKey)')
+    p.add_argument('--env-file', metavar='FILE',
+                   help='Path to a .env file (overrides .env discovery)')
     p.add_argument('--url', '-u', metavar='URL',
                    help='Lidarr base URL (e.g. http://localhost:8686)')
     p.add_argument('--api-key', '-k', metavar='KEY',
                    help='Lidarr API key')
+    p.add_argument('--setup', action='store_true',
+                   help='Set up persistence (install deps, create the il symlink, '
+                        'write the Unraid boot script, scaffold .env) and exit; '
+                        'no import path required')
     p.add_argument('--copy-art', action='store_true',
                    help='Copy artwork instead of moving it to the destination')
     p.add_argument('--confirm-artwork', action='store_true',
@@ -2727,6 +3072,12 @@ def parse_args():
         print(EXAMPLES % {'prog': p.prog})
         sys.exit(0)
 
+    # --setup is a standalone bootstrap: it needs neither an import path nor
+    # resolved Lidarr credentials. main() dispatches to run_setup() once
+    # logging is configured.
+    if args.setup:
+        return args
+
     if not args.import_path:
         p.error('import_path is required (or use --examples)')
 
@@ -2757,6 +3108,10 @@ def main():
         format='%(asctime)s [%(levelname)s] %(message)s',
         datefmt='%H:%M:%S',
     )
+
+    if getattr(args, 'setup', False):
+        run_setup(args)
+        sys.exit(0)
 
     import_path = os.path.abspath(args.import_path)
     if not os.path.isdir(import_path):

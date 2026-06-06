@@ -20,7 +20,39 @@ just disables that feature and the run continues.
 Install routing: pip libraries via `pip`, binaries via `brew` (macOS) or `un-get`
 (Unraid).
 
+## Quick start: `--setup`
+
+`--setup` is a standalone bootstrap that needs no import path. It installs the
+non-optional dependencies, creates the `il` symlink, scaffolds a `.env`
+(prompting for `LIDARR_URL` / `LIDARR_API_KEY`; the key is read without echo and
+the file is written `chmod 600`), and on Unraid writes the reboot-survivable boot
+script. It is idempotent and never overwrites an existing `.env` without
+confirmation.
+
+```bash
+python3 tools/lidarr/ImportLidarrManual.py --setup        # interactive
+# non-interactive (e.g. cron/CI): pass credentials as flags or LIDARR_* env vars
+python3 tools/lidarr/ImportLidarrManual.py --setup --url http://localhost:8686 --api-key KEY
+```
+
+When `un-get`/`brew` has no `rsgain` package, `--setup` fetches the official
+rsgain release for this platform/arch and verifies it against a pinned sha256
+before extracting it to `tools/lidarr/bin/rsgain` (which `resolve_rsgain()`
+checks first). That path is on the persistent checkout, so the fetched binary
+survives an Unraid reboot with no boot-script entry.
+
+### Config / `.env` location
+
+`--setup` writes `.env` to `${XDG_CONFIG_HOME:-~/.config}/importlidarr/.env` by
+default, but next to the script on Unraid (where `~/.config` is RAM-wiped on
+reboot). Runtime discovery precedence: `--url`/`--api-key` > `--config` >
+`--env-file` > XDG `.env` > next-to-script `.env` > `./.env` > `LIDARR_*` env
+vars.
+
 ## macOS
+
+`python3 tools/lidarr/ImportLidarrManual.py --setup` (above) handles everything.
+To do it by hand instead:
 
 ```bash
 brew install imagemagick ffmpeg rsgain git
@@ -37,10 +69,11 @@ Unraid runs its OS from RAM, so `/`, `/usr`, and pip site-packages are wiped on
 every reboot. Only `/boot` (flash) and the array (`/mnt/...`) persist. Keep the
 checkout on the array and let the boot script re-establish the rest.
 
-1. Install git (one time) via un-get / NerdTools:
+1. Install git and python3 (one time) via un-get / NerdTools. Unraid does not
+   ship python3, so it must be installed before running the script:
 
    ```bash
-   un-get update && un-get install git
+   un-get update && un-get install git python3
    ```
 
 2. Clone onto a persistent array path (use any persistent array path; on this host anything under `/mnt/vms` persists):
@@ -50,12 +83,13 @@ checkout on the array and let the boot script re-establish the rest.
    chmod +x "/mnt/vms/dockerappdata/media-automation/tools/lidarr/ImportLidarrManual.py"
    ```
 
-3. Run it once; the dependency preflight detects missing tools, offers to
-   install them, and (after reinstalling pip libs) offers to write a boot script
-   that reinstalls them and recreates the `il` symlink on every boot:
+3. Run `--setup` once. It installs the missing tools (fetching a checksum-verified
+   `rsgain` binary if no package carries it), scaffolds `.env`, creates the `il`
+   symlink, and writes a boot script that reinstalls the pip libs and recreates
+   the symlink on every boot:
 
    ```bash
-   python3 /mnt/vms/dockerappdata/media-automation/tools/lidarr/ImportLidarrManual.py /path/to/music
+   python3 /mnt/vms/dockerappdata/media-automation/tools/lidarr/ImportLidarrManual.py --setup
    ```
 
    - If the User Scripts plugin is installed, it writes
@@ -63,7 +97,11 @@ checkout on the array and let the boot script re-establish the rest.
      "At Startup of Array" once in the User Scripts UI.
    - Otherwise it appends an idempotent block to `/boot/config/go`.
 
-4. `il` then works from any path (it is symlinked into `/usr/local/bin`).
+4. `il` then works from any path (it is symlinked into `/usr/local/bin`):
+
+   ```bash
+   il /path/to/music
+   ```
 
 ### Updates
 
