@@ -367,4 +367,85 @@ mod tests {
         // g_genres should be lowercased
         assert_eq!(engine.g_genres, vec!["classical", "ambient"]);
     }
+
+    use proptest::prelude::*;
+
+    fn arb_words() -> impl Strategy<Value = Vec<String>> {
+        prop::collection::vec("[a-zA-Z']{0,8}", 0..6)
+    }
+
+    prop_compose! {
+        fn arb_detection_config()(
+            r_stems in arb_words(), r_exact in arb_words(),
+            pg13_stems in arb_words(), pg13_exact in arb_words(),
+            false_positives in arb_words(), g_genres in arb_words(),
+        ) -> DetectionConfig {
+            DetectionConfig {
+                r_stems, r_exact, pg13_stems, pg13_exact, false_positives, g_genres,
+            }
+        }
+    }
+
+    proptest! {
+        // Never panics on arbitrary config + arbitrary (incl. Unicode) lyrics,
+        // and the returned tier is always one of the three valid values.
+        #[test]
+        fn classify_never_panics_and_tier_is_valid(
+            cfg in arb_detection_config(), text in ".*",
+        ) {
+            let engine = DetectionEngine::new(&cfg);
+            let (tier, _matched) = engine.classify_lyrics(&text);
+            prop_assert!(matches!(tier, None | Some("R") | Some("PG-13")));
+        }
+
+        #[test]
+        fn classify_is_deterministic(cfg in arb_detection_config(), text in ".*") {
+            let engine = DetectionEngine::new(&cfg);
+            prop_assert_eq!(
+                engine.classify_lyrics(&text), engine.classify_lyrics(&text));
+        }
+
+        #[test]
+        fn classify_blank_text_is_none(
+            cfg in arb_detection_config(), ws in "[ \\t\\r\\n]*",
+        ) {
+            let engine = DetectionEngine::new(&cfg);
+            let (tier, matched) = engine.classify_lyrics(&ws);
+            prop_assert!(tier.is_none());
+            prop_assert!(matched.is_empty());
+        }
+
+        // Stem hits are always drawn from the input tokens.
+        #[test]
+        fn detect_stems_returns_only_input_tokens(
+            tokens in arb_words(), stems in arb_words(), fps in arb_words(),
+        ) {
+            let refs: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
+            for hit in detect_stems(&refs, &stems, &fps) {
+                prop_assert!(tokens.contains(&hit));
+            }
+        }
+
+        // Exact hits are always one of the configured pattern words; adversarial
+        // regex metacharacters must not break compilation (regex::escape) or panic.
+        #[test]
+        fn detect_exact_returns_only_pattern_words(
+            words in arb_words(), text in ".*",
+        ) {
+            let patterns = compile_exact_patterns(&words);
+            for hit in detect_exact(&text, &patterns) {
+                prop_assert!(words.contains(&hit));
+            }
+        }
+
+        #[test]
+        fn match_g_genre_returns_an_input_genre(
+            cfg in arb_detection_config(), genres in arb_words(),
+        ) {
+            let engine = DetectionEngine::new(&cfg);
+            if let Some(g) = engine.match_g_genre(&genres) {
+                prop_assert!(genres.iter().any(|x| x.as_str() == g));
+            }
+        }
+    }
 }
