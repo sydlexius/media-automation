@@ -355,6 +355,17 @@ def optional_missing_dependencies(deps):
     return [d for d in deps if d.optional and not d.check()]
 
 
+def setup_pip_packages(deps):
+    """Pip packages that `--setup` installs and boot-persists.
+
+    Includes optional pip deps (e.g. cv2 / opencv-python-headless) on purpose:
+    `--setup` is a full bootstrap, and anything it installs must also land in
+    the Unraid boot script so a RAM-wiped reboot reinstalls it. Returning the
+    one list both call sites use keeps install and boot-persist in lockstep.
+    """
+    return sorted(d.packages['pip'] for d in deps if d.kind == 'pip')
+
+
 def install_command_for(dep, platform):
     """Return the argv list to install dep on platform, or None if unsupported.
 
@@ -670,11 +681,13 @@ def run_setup(args):
     log.info("=" * 60)
 
     deps = build_dependencies()
-    non_optional = [d for d in deps if not d.optional]
-    # pip deps that a reboot would wipe and the boot script must reinstall
-    pip_packages = [d.packages['pip'] for d in non_optional if d.kind == 'pip']
+    # --setup is a full bootstrap: install ALL deps, including optional ones
+    # (cv2 for higher-quality disc-art cropping, git). pip deps a reboot would
+    # wipe - including cv2 - go to the boot script via setup_pip_packages so
+    # install and boot-persist stay in lockstep.
+    pip_packages = setup_pip_packages(deps)
 
-    for dep in non_optional:
+    for dep in deps:
         if dep.check():
             log.info("Present: %s", dep.name)
             continue

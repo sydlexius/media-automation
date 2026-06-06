@@ -541,5 +541,25 @@ class TestScaffoldEnvFile(unittest.TestCase):
             self.assertIn('existing', f.read())
 
 
+class TestSetupPipPackages(unittest.TestCase):
+    def test_includes_optional_cv2(self):
+        pkgs = mod.setup_pip_packages(mod.build_dependencies())
+        # cv2 is optional but --setup installs it, so it MUST also be in the
+        # boot-persist list or it would silently vanish on an Unraid reboot.
+        self.assertIn('opencv-python-headless', pkgs)
+
+    def test_includes_non_optional_pip_deps(self):
+        pkgs = mod.setup_pip_packages(mod.build_dependencies())
+        self.assertIn('mutagen', pkgs)
+        self.assertIn('essentia', pkgs)
+
+    def test_only_pip_kind_and_sorted(self):
+        pkgs = mod.setup_pip_packages(mod.build_dependencies())
+        # binaries (rsgain, ffmpeg, magick, git) must not appear
+        self.assertNotIn('rsgain', pkgs)
+        self.assertNotIn('git', pkgs)
+        self.assertEqual(pkgs, sorted(pkgs))
+
+
 if __name__ == '__main__':
     unittest.main()

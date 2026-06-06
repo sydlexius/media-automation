@@ -22,12 +22,14 @@ Install routing: pip libraries via `pip`, binaries via `brew` (macOS) or `un-get
 
 ## Quick start: `--setup`
 
-`--setup` is a standalone bootstrap that needs no import path. It installs the
-non-optional dependencies, creates the `il` symlink, scaffolds a `.env`
-(prompting for `LIDARR_URL` / `LIDARR_API_KEY`; the key is read without echo and
-the file is written `chmod 600`), and on Unraid writes the reboot-survivable boot
-script. It is idempotent and never overwrites an existing `.env` without
-confirmation.
+`--setup` is a standalone bootstrap that needs no import path. It installs all
+dependencies - including the optional ones (`cv2`/`opencv-python-headless` for
+higher-quality disc-art cropping, and `git`) - creates the `il` symlink,
+scaffolds a `.env` (prompting for `LIDARR_URL` / `LIDARR_API_KEY`; the key is
+read without echo and the file is written `chmod 600`), and on Unraid writes the
+reboot-survivable boot script. Optional pip deps (cv2) are included in that boot
+script too, so they survive a reboot. It is idempotent and never overwrites an
+existing `.env` without confirmation.
 
 ```bash
 python3 tools/lidarr/ImportLidarrManual.py --setup        # interactive
