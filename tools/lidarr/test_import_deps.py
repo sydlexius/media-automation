@@ -1,8 +1,11 @@
+import io
 import os
 import shutil
 import sys
+import tarfile
 import tempfile
 import unittest
+import zipfile
 from argparse import Namespace
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +34,21 @@ class TestDetectPlatform(unittest.TestCase):
         self.assertEqual(
             mod.detect_platform(platform='win32', unraid_marker='/no/such/marker'),
             'unknown',
+        )
+
+    def test_unraid_via_kernel_release_without_marker(self):
+        # No marker file, but the Unraid kernel suffix is the signal.
+        self.assertEqual(
+            mod.detect_platform(platform='linux', unraid_marker='/no/such/marker',
+                                kernel_release='6.18.33-Unraid'),
+            'unraid',
+        )
+
+    def test_plain_linux_kernel_is_not_unraid(self):
+        self.assertEqual(
+            mod.detect_platform(platform='linux', unraid_marker='/no/such/marker',
+                                kernel_release='5.15.0-generic'),
+            'linux',
         )
 
 
@@ -330,6 +348,197 @@ class TestScriptDir(unittest.TestCase):
         real_file = os.path.join(real_dir, 'ImportLidarrManual.py')
         open(real_file, 'w').close()
         self.assertEqual(mod._script_dir(real_file), os.path.realpath(real_dir))
+
+
+class TestVerifySha256(unittest.TestCase):
+    # sha256(b'hello world')
+    HELLO = 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9'
+
+    def test_match(self):
+        self.assertTrue(mod._verify_sha256(b'hello world', self.HELLO))
+
+    def test_match_is_case_insensitive(self):
+        self.assertTrue(mod._verify_sha256(b'hello world', self.HELLO.upper()))
+
+    def test_mismatch(self):
+        self.assertFalse(mod._verify_sha256(b'hello world', '00' * 32))
+
+    def test_mismatch_on_tampered_bytes(self):
+        self.assertFalse(mod._verify_sha256(b'hello world!', self.HELLO))
+
+
+class TestExtractMember(unittest.TestCase):
+    def test_zip_member(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as zf:
+            zf.writestr('pkg/rsgain', b'BINARY')
+        self.assertEqual(
+            mod._extract_member(buf.getvalue(), 'x.zip', 'pkg/rsgain'), b'BINARY')
+
+    def test_tar_xz_member(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode='w:xz') as tf:
+            data = b'BINARY'
+            info = tarfile.TarInfo('pkg/rsgain')
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        self.assertEqual(
+            mod._extract_member(buf.getvalue(), 'x.tar.xz', 'pkg/rsgain'), b'BINARY')
+
+    def test_unknown_archive_type_returns_none(self):
+        self.assertIsNone(mod._extract_member(b'whatever', 'x.bin', 'member'))
+
+
+class TestResolveRsgainPrecedence(unittest.TestCase):
+    def setUp(self):
+        self._orig_bundled = mod.BUNDLED_RSGAIN
+        self._orig_rsgain_bin = mod.RSGAIN_BIN
+        self._orig_which = mod.shutil.which
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+        def restore():
+            mod.BUNDLED_RSGAIN = self._orig_bundled
+            mod.RSGAIN_BIN = self._orig_rsgain_bin
+            mod.shutil.which = self._orig_which
+        self.addCleanup(restore)
+
+    def _make_exe(self, name):
+        path = os.path.join(self.d, name)
+        open(path, 'w').close()
+        os.chmod(path, 0o755)
+        return path
+
+    def test_bundled_wins(self):
+        bundled = self._make_exe('bundled')
+        rsgain_bin = self._make_exe('rsgain_bin')
+        mod.BUNDLED_RSGAIN = bundled
+        mod.RSGAIN_BIN = rsgain_bin
+        mod.shutil.which = lambda _n: '/usr/bin/rsgain'
+        self.assertEqual(mod.resolve_rsgain(), bundled)
+
+    def test_rsgain_bin_when_no_bundled(self):
+        rsgain_bin = self._make_exe('rsgain_bin')
+        mod.BUNDLED_RSGAIN = os.path.join(self.d, 'absent')
+        mod.RSGAIN_BIN = rsgain_bin
+        mod.shutil.which = lambda _n: '/usr/bin/rsgain'
+        self.assertEqual(mod.resolve_rsgain(), rsgain_bin)
+
+    def test_path_fallback(self):
+        mod.BUNDLED_RSGAIN = os.path.join(self.d, 'absent1')
+        mod.RSGAIN_BIN = os.path.join(self.d, 'absent2')
+        mod.shutil.which = lambda _n: '/usr/bin/rsgain'
+        self.assertEqual(mod.resolve_rsgain(), '/usr/bin/rsgain')
+
+    def test_non_executable_bundled_is_skipped(self):
+        bundled = os.path.join(self.d, 'bundled')
+        open(bundled, 'w').close()
+        os.chmod(bundled, 0o644)  # not executable
+        rsgain_bin = self._make_exe('rsgain_bin')
+        mod.BUNDLED_RSGAIN = bundled
+        mod.RSGAIN_BIN = rsgain_bin
+        mod.shutil.which = lambda _n: None
+        self.assertEqual(mod.resolve_rsgain(), rsgain_bin)
+
+
+class TestGetConfigDir(unittest.TestCase):
+    def test_unraid_is_next_to_script(self):
+        self.assertEqual(mod.get_config_dir('unraid'), mod.SCRIPT_DIR)
+
+    def test_linux_uses_xdg(self):
+        orig = os.environ.get('XDG_CONFIG_HOME')
+        os.environ['XDG_CONFIG_HOME'] = '/tmp/xdghome'
+        self.addCleanup(
+            lambda: os.environ.__setitem__('XDG_CONFIG_HOME', orig)
+            if orig is not None else os.environ.pop('XDG_CONFIG_HOME', None))
+        self.assertEqual(mod.get_config_dir('linux'),
+                         '/tmp/xdghome/importlidarr')
+
+
+class TestEnvDiscoveryPaths(unittest.TestCase):
+    def test_env_file_takes_precedence(self):
+        paths = mod.env_discovery_paths(Namespace(env_file='/custom/.env'))
+        self.assertEqual(paths[0], '/custom/.env')
+        # XDG, next-to-script, and CWD follow.
+        self.assertEqual(len(paths), 4)
+        self.assertEqual(paths[-1], os.path.join(os.getcwd(), '.env'))
+
+    def test_without_env_file_xdg_is_first(self):
+        orig = os.environ.get('XDG_CONFIG_HOME')
+        os.environ['XDG_CONFIG_HOME'] = '/tmp/xdghome'
+        self.addCleanup(
+            lambda: os.environ.__setitem__('XDG_CONFIG_HOME', orig)
+            if orig is not None else os.environ.pop('XDG_CONFIG_HOME', None))
+        paths = mod.env_discovery_paths(Namespace(env_file=None))
+        self.assertEqual(len(paths), 3)
+        self.assertEqual(paths[0], '/tmp/xdghome/importlidarr/.env')
+        self.assertEqual(paths[-1], os.path.join(os.getcwd(), '.env'))
+
+
+class TestScaffoldEnvFile(unittest.TestCase):
+    def _args(self, **kw):
+        base = dict(url=None, api_key=None, local_path=None, remote_path=None)
+        base.update(kw)
+        return Namespace(**base)
+
+    def test_noninteractive_writes_0600(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        env_path = os.path.join(d, '.env')
+        args = self._args(url='http://lidarr:8686', api_key='SECRET',
+                          local_path='/mnt/user', remote_path='/share')
+        self.assertTrue(mod.scaffold_env_file(env_path, args, interactive=False))
+        self.assertEqual(os.stat(env_path).st_mode & 0o777, 0o600)
+        with open(env_path) as f:
+            body = f.read()
+        self.assertIn('LIDARR_URL=http://lidarr:8686', body)
+        self.assertIn('LIDARR_API_KEY=SECRET', body)
+        self.assertIn('LIDARR_LOCAL_PATH=/mnt/user', body)
+        self.assertIn('LIDARR_REMOTE_PATH=/share', body)
+
+    def test_interactive_overwrite_retightens_perms(self):
+        # A pre-existing world-readable .env must end up 0600 after an
+        # accepted interactive overwrite (the security contract).
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        env_path = os.path.join(d, '.env')
+        with open(env_path, 'w') as f:
+            f.write('LIDARR_URL=old\n')
+        os.chmod(env_path, 0o644)
+        # input() is a builtin; confirm the overwrite, skip optional prompts.
+        import builtins
+        orig = builtins.input
+        builtins.input = lambda prompt='': 'y' if 'overwrite' in prompt.lower() else ''
+        self.addCleanup(setattr, builtins, 'input', orig)
+        args = self._args(url='http://new:8686', api_key='NEW')
+        self.assertTrue(mod.scaffold_env_file(env_path, args, interactive=True))
+        self.assertEqual(os.stat(env_path).st_mode & 0o777, 0o600)
+        with open(env_path) as f:
+            self.assertIn('http://new:8686', f.read())
+
+    def test_noninteractive_missing_values_skips(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        env_path = os.path.join(d, '.env')
+        # Ensure env vars don't accidentally satisfy it.
+        for var in ('LIDARR_URL', 'LIDARR_API_KEY'):
+            orig = os.environ.pop(var, None)
+            if orig is not None:
+                self.addCleanup(os.environ.__setitem__, var, orig)
+        args = self._args()
+        self.assertFalse(mod.scaffold_env_file(env_path, args, interactive=False))
+        self.assertFalse(os.path.exists(env_path))
+
+    def test_no_clobber_when_noninteractive(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        env_path = os.path.join(d, '.env')
+        with open(env_path, 'w') as f:
+            f.write('LIDARR_URL=existing\n')
+        args = self._args(url='http://new:8686', api_key='NEW')
+        self.assertFalse(mod.scaffold_env_file(env_path, args, interactive=False))
+        with open(env_path) as f:
+            self.assertIn('existing', f.read())
 
 
 if __name__ == '__main__':
