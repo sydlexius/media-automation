@@ -480,7 +480,7 @@ def preflight_dependencies(args, album_dirs, interactive=None):
         except EOFError:
             answer = 'n'
         if answer in ('y', 'yes'):
-            script_path = os.path.abspath(__file__)
+            script_path = os.path.realpath(__file__)
             write_boot_persistence(installed_pip, script_path)
             ensure_il_symlink(script_path)
 
@@ -2559,6 +2559,16 @@ def load_dotenv(env_path: str) -> dict[str, str]:
     return env
 
 
+def _script_dir(invoked_path: str) -> str:
+    """Directory of the real script file.
+
+    Uses realpath (not abspath) so an invocation via a symlink (e.g.
+    /usr/local/bin/il -> the real script) resolves to the real file's
+    directory, where sibling files such as .env actually live.
+    """
+    return os.path.dirname(os.path.realpath(invoked_path))
+
+
 def load_config(config_path: str) -> tuple[str, str]:
     """Load LidarrUrl and ApiKey from a JSON config file."""
     with open(config_path) as f:
@@ -2588,7 +2598,7 @@ def resolve_settings(args) -> dict[str, str]:
         url, api_key = load_config(args.config)
 
     # From .env file in script directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = _script_dir(__file__)
     env = load_dotenv(os.path.join(script_dir, '.env'))
 
     url = url or env.get('LIDARR_URL', '') or os.environ.get('LIDARR_URL', '')
