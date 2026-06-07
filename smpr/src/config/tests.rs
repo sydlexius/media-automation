@@ -767,6 +767,6 @@ proptest::proptest! {
     // parse_toml must return Ok or Err on any input - never panic.
     #[test]
     fn parse_toml_never_panics(s in ".*") {
-        let _ = parse_toml(&s);
+        let _ = super::parse_toml(&s);
     }
 }
