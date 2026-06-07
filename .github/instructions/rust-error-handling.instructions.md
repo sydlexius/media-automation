@@ -6,6 +6,7 @@ excludeAgent: "coding-agent"
 # Error Handling Review
 
 Check for:
+
 - `?` operator that silently skips items or returns early without logging
 - Auth failures (401/403) masked as generic HTTP errors -- these should be
   surfaced distinctly so users know their API key is wrong

@@ -51,18 +51,21 @@ Default: `http://localhost:8191`.
 ### Search strategy
 
 For each unrated file, extract from ComicInfo.xml:
+
 - `Series` name
 - `Number` (issue number)
 - `Publisher` (to narrow results)
 - `Volume` / `Year` (to disambiguate reboots)
 
 Construct an Amazon search query:
-```
+
+```text
 {series} #{number} {publisher}
 ```
 
 Search URL:
-```
+
+```text
 https://www.amazon.com/s?k={url_encoded_query}&i=digital-text&rh=n:156104011
 ```
 
@@ -75,6 +78,7 @@ detail page and extract the age rating.
 
 Amazon displays age/content ratings in the "Product details" or "Book details"
 section of Kindle comic pages. Look for:
+
 - A "Content Rating" or "Age Range" field in the product details table
 - The former Comixology rating labels (e.g., "9+", "13+", "17+")
 - A "Reading age" field (common on graphic novels)
@@ -209,7 +213,7 @@ default: "Teen"
 
 Per the Anansi Project schema (v2.0/v2.1), ordered least to most restrictive:
 
-```
+```text
 Unknown
 Rating Pending
 Early Childhood
@@ -231,7 +235,7 @@ The tool must only write values from this list.
 
 ## CLI Interface
 
-```
+```text
 usage: age_rater.py [-h] [--config CONFIG] [--dry-run] [--log LOG]
                     [--amazon | --no-amazon]
                     [--flaresolverr URL] [--max-requests MAX]
@@ -263,7 +267,7 @@ options:
 
 Scans all CBZ files without age ratings and reports:
 
-```
+```text
 === Publishers (unrated files only) ===
 DC Comics                    482
 Marvel                       391
@@ -293,7 +297,7 @@ Run this first to drive the rules.yaml creation.
 
 Evaluates every file, prints what would happen, modifies nothing:
 
-```
+```text
 [AMAZON]    Teen (Amazon: 13+)                → /path/to/file.cbz
 [HEURISTIC] Mature 17+ (imprint: Vertigo)     → /path/to/file.cbz
 [SKIPPED]   Already rated: MA15+              → /path/to/file.cbz
@@ -303,6 +307,7 @@ Evaluates every file, prints what would happen, modifies nothing:
 ### Normal mode
 
 Per file:
+
 1. Check if already rated → skip
 2. Try Amazon via FlareSolverr (if `--amazon`) → apply if found
 3. Try heuristic rules → apply if matched
@@ -310,7 +315,7 @@ Per file:
 
 ### Summary output
 
-```
+```text
 Total files:          5546
 Already rated:        2436
 Rated via Amazon:     2200
@@ -322,6 +327,7 @@ No ComicInfo.xml:     110
 ## Resumability
 
 Maintain a state file (`progress.json`) tracking:
+
 - Files already processed (path → outcome + rating applied)
 - Amazon request count
 
@@ -344,7 +350,7 @@ files that were already handled or returned "no match."
 
 ## Deployment
 
-```
+```text
 /mnt/vms/dockerappdata/metron-tagger/config/age-rater/
 ├── age_rater.py
 ├── rules.yaml        (user-curated heuristic rules)
