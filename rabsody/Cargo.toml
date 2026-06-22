@@ -1,0 +1,28 @@
+[package]
+name = "rabsody"
+version = "0.1.0"
+edition = "2024"
+description = "RABSody - a Rust CLI for curating an Audiobookshelf (ABS) library"
+license = "BSD-2-Clause"
+rust-version = "1.94"
+
+[[bin]]
+name = "rabs"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+csv = "1"
+dirs = "6"
+env_logger = "0.11"
+log = "0.4"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", features = ["json"] }
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "z"

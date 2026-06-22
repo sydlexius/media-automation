@@ -8,6 +8,15 @@ updates:
       - "dependencies"
       - "rust"
 
+  - package-ecosystem: "cargo"
+    directory: "/rabsody"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "rust"
+      - "rabsody"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

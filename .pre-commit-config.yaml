@@ -44,3 +44,24 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+
+      - id: cargo-fmt-rabsody
+        name: cargo fmt (rabsody)
+        entry: bash -c 'source "$HOME/.cargo/env" 2>/dev/null; cd rabsody && cargo fmt -- --check'
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy-rabsody
+        name: cargo clippy (rabsody)
+        entry: bash -c 'source "$HOME/.cargo/env" 2>/dev/null; cd rabsody && cargo clippy -- -D warnings'
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-check-rabsody
+        name: cargo check (rabsody)
+        entry: bash -c 'source "$HOME/.cargo/env" 2>/dev/null; cd rabsody && cargo check'
+        language: system
+        types: [rust]
+        pass_filenames: false
