@@ -15,13 +15,19 @@ so there is currently zero risk to a live library. Write commands (metadata edit
 chapter writes, embed/encode) land only after the shared write harness (dry-run +
 backup + ledger) and per-command safety gates exist.
 
-Implemented today:
+Implemented today (all read-only):
 
 - `rabs doctor` - verify connectivity + credentials against the ABS server.
 - `rabs report stats` - library summary (item count, ASIN/ISBN coverage, abridged
-  count, distinct genres/tags/narrators, top genres).
+  count, distinct genres/tags/narrators, top genres/tags).
+- `rabs items list|get|batch-get` - read library items (filter/sort/paginate,
+  `--expanded` for audio files + chapters); JSON output.
+- `rabs metadata search|providers|covers` - provider metadata lookups (JSON).
+- `rabs search <query>` - search within the default library (JSON).
+- `rabs tasks list [--wait]` - list server tasks; `--wait` blocks until the queue
+  drains (the reusable poller future bulk ops will serialize on).
 
-Planned command families (stubbed): `asin`, `chapters`, `metadata`, `fields`.
+Planned command families (stubbed): `asin`, `chapters`, `fields`.
 See the **"RABSody: abs-cli parity"** milestone / the parity epic for the roadmap.
 
 ## Configuration
@@ -35,6 +41,9 @@ reads. A native `rabs login` + token refresh is on the roadmap.
 ```sh
 cargo run -- doctor
 cargo run -- report stats
+cargo run -- items list --limit 20 --sort media.metadata.title
+cargo run -- search "dune"
+cargo run -- tasks list --wait --timeout 120
 ```
 
 ## Quality gates

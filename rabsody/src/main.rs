@@ -7,11 +7,17 @@
 
 mod api;
 mod error;
+mod items;
+mod metadata;
+mod tasks;
 
 use api::{AbsConfig, Client};
 use clap::{Parser, Subcommand};
 use error::{Error, Result};
+use items::ItemsCmd;
+use metadata::MetadataCmd;
 use std::collections::BTreeMap;
+use tasks::TasksCmd;
 
 #[derive(Parser)]
 #[command(
@@ -31,15 +37,26 @@ enum Command {
     /// Read-only reporting over the library.
     #[command(subcommand)]
     Report(ReportCmd),
+    /// Read library items (list / get / batch-get).
+    #[command(subcommand)]
+    Items(ItemsCmd),
+    /// Provider metadata: search / providers / covers.
+    #[command(subcommand)]
+    Metadata(MetadataCmd),
+    /// Search within the default library.
+    Search {
+        /// Search query.
+        query: String,
+    },
+    /// Server tasks: list (optionally wait until drained).
+    #[command(subcommand)]
+    Tasks(TasksCmd),
     /// ASIN identification and correction (planned).
     #[command(subcommand)]
     Asin(Planned),
     /// Chapter assessment, repair, and title reformatting (planned).
     #[command(subcommand)]
     Chapters(Planned),
-    /// Narrator / abridged / edition metadata audit (planned).
-    #[command(subcommand)]
-    Metadata(Planned),
     /// Title / subtitle / author / spelling field hygiene (planned).
     #[command(subcommand)]
     Fields(Planned),
@@ -72,7 +89,11 @@ fn run() -> Result<()> {
     match cli.command {
         Command::Doctor => doctor(),
         Command::Report(ReportCmd::Stats) => report_stats(),
-        Command::Asin(_) | Command::Chapters(_) | Command::Metadata(_) | Command::Fields(_) => {
+        Command::Items(cmd) => items::run(cmd),
+        Command::Metadata(cmd) => metadata::run(cmd),
+        Command::Search { query } => search(query),
+        Command::Tasks(cmd) => tasks::run(cmd),
+        Command::Asin(_) | Command::Chapters(_) | Command::Fields(_) => {
             // Exit non-zero so scripts/CI don't read an unimplemented family as
             // a successful no-op.
             Err(Error::Unsupported(
@@ -84,18 +105,18 @@ fn run() -> Result<()> {
     }
 }
 
-fn connect() -> Result<(Client, String)> {
-    let cfg = AbsConfig::load()?;
-    // Treat an empty or whitespace-only defaultLibrary as missing config, so a
-    // blank value can never produce a malformed `/api/libraries//items` path.
-    let library = cfg
-        .default_library
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| Error::Config("no defaultLibrary set in abs-cli config".to_string()))?;
-    Ok((Client::new(&cfg), library))
+fn search(query: String) -> Result<()> {
+    let (client, library) = api::connect()?;
+    print_json(&client.search_library(&library, &query)?)
+}
+
+/// Serialize a value as pretty JSON to stdout. The `items`/`metadata` read
+/// commands emit raw API data for piping, unlike the human-readable summaries.
+pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
+    let json = serde_json::to_string_pretty(value)
+        .map_err(|e| Error::Parse(format!("serializing output: {e}")))?;
+    println!("{json}");
+    Ok(())
 }
 
 fn doctor() -> Result<()> {
@@ -119,7 +140,7 @@ fn doctor() -> Result<()> {
 }
 
 fn report_stats() -> Result<()> {
-    let (client, library) = connect()?;
+    let (client, library) = api::connect()?;
     let items = client.all_items(&library)?;
     let total = items.len();
 

@@ -11,8 +11,8 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
@@ -48,13 +48,13 @@ pub struct ItemsPage {
     pub total: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Item {
     pub id: String,
     pub media: Media,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Media {
     #[serde(default)]
     pub duration: f64,
@@ -63,9 +63,22 @@ pub struct Media {
     #[serde(rename = "numChapters", default)]
     pub num_chapters: u32,
     pub metadata: Metadata,
+    /// Expanded-only: per-file audio details. Absent in minified responses.
+    #[serde(
+        rename = "audioFiles",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub audio_files: Option<Vec<AudioFile>>,
+    /// Expanded-only: chapter list. Absent in minified responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chapters: Option<Vec<Chapter>>,
+    /// Expanded-only: processed track array on Book responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracks: Option<Vec<AudioFile>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Metadata {
     pub title: Option<String>,
     #[serde(rename = "authorName")]
@@ -84,8 +97,130 @@ pub struct Metadata {
     pub subtitle: Option<String>,
 }
 
+/// One audio file (or processed track) in an expanded item's media.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioFile {
+    #[serde(default)]
+    pub index: u32,
+    #[serde(default)]
+    pub ino: String,
+    #[serde(default)]
+    pub duration: f64,
+    #[serde(default)]
+    pub metadata: AudioFileMetadata,
+}
+
+/// File-level metadata for an [`AudioFile`].
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioFileMetadata {
+    #[serde(default)]
+    pub filename: String,
+    #[serde(default)]
+    pub ext: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub size: u64,
+}
+
+/// One chapter in an expanded item's media.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Chapter {
+    #[serde(default)]
+    pub id: u32,
+    #[serde(default)]
+    pub start: f64,
+    #[serde(default)]
+    pub end: f64,
+    #[serde(default)]
+    pub title: String,
+}
+
+/// Paginated list response from `GET /api/libraries/{id}/items`, including the
+/// pagination metadata (unlike the internal [`ItemsPage`]).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ItemsListResponse {
+    #[serde(default)]
+    pub results: Vec<Item>,
+    #[serde(default)]
+    pub total: u32,
+    #[serde(default)]
+    pub limit: u32,
+    #[serde(default)]
+    pub page: u32,
+}
+
+/// Query parameters for [`Client::items_list`]. Only set fields are sent.
+#[derive(Debug, Default)]
+pub struct ItemsListParams {
+    pub limit: Option<u32>,
+    pub page: Option<u32>,
+    pub sort: Option<String>,
+    pub desc: bool,
+    pub filter: Option<String>,
+    pub minified: bool,
+    pub include: Option<String>,
+}
+
+impl ItemsListParams {
+    /// Build the `(key, value)` query pairs, omitting unset/false fields. Pure
+    /// (no I/O) so it is unit-testable without a server.
+    fn to_query_pairs(&self) -> Vec<(&'static str, String)> {
+        let mut q: Vec<(&'static str, String)> = Vec::new();
+        if let Some(limit) = self.limit {
+            q.push(("limit", limit.to_string()));
+        }
+        if let Some(page) = self.page {
+            q.push(("page", page.to_string()));
+        }
+        if let Some(sort) = &self.sort {
+            q.push(("sort", sort.clone()));
+        }
+        if self.desc {
+            q.push(("desc", "1".to_string()));
+        }
+        if let Some(filter) = &self.filter {
+            q.push(("filter", filter.clone()));
+        }
+        if self.minified {
+            q.push(("minified", "1".to_string()));
+        }
+        if let Some(include) = &self.include {
+            q.push(("include", include.clone()));
+        }
+        q
+    }
+}
+
+/// A metadata provider entry from `GET /api/search/providers`.
+///
+/// NOTE: shape not yet verified against a live ABS server (token was invalid at
+/// build time); see the PR notes. Fields are lenient so a shape surprise
+/// surfaces as missing data rather than a hard parse failure.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProviderInfo {
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+/// A cover-search result from `GET /api/search/covers`.
+///
+/// NOTE: ABS streams cover results over its Socket.IO connection, so this HTTP
+/// response may be partial or empty. Shape unverified against a live server.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CoverResult {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+}
+
 /// A single result from the provider metadata search.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResult {
     pub asin: Option<String>,
     pub title: Option<String>,
@@ -97,6 +232,55 @@ pub struct SearchResult {
     pub abridged: bool,
     pub isbn: Option<String>,
     pub language: Option<String>,
+}
+
+/// Library search response (`GET /api/libraries/{id}/search`).
+///
+/// Modeled on the ABS shape (a `book` array of matches plus other categories);
+/// not yet verified against a live server. Lenient so surprises don't hard-fail.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LibrarySearchResponse {
+    #[serde(default)]
+    pub book: Vec<LibrarySearchBook>,
+    #[serde(default)]
+    pub series: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub authors: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// One book match in a [`LibrarySearchResponse`]; the hit is the nested item.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySearchBook {
+    pub library_item: Option<Item>,
+    pub match_key: Option<String>,
+    pub match_text: Option<String>,
+}
+
+/// A server task from `GET /api/tasks`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Task {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub is_finished: bool,
+}
+
+/// Wrapper for `GET /api/tasks` - the endpoint returns an OBJECT with a `tasks`
+/// array, not a bare array.
+#[derive(Debug, Deserialize)]
+pub struct TasksResponse {
+    #[serde(default)]
+    pub tasks: Vec<Task>,
 }
 
 pub struct Client {
@@ -134,25 +318,19 @@ impl Client {
         for (k, v) in query {
             req = req.query(*k, *v);
         }
-        let mut resp = req.call()?;
-        let status = resp.status().as_u16();
-        if status == 401 || status == 403 {
-            return Err(Error::Auth { status });
-        }
-        if !resp.status().is_success() {
-            let body = resp.body_mut().read_to_string().map_err(|e| {
-                Error::Connection(format!(
-                    "reading HTTP {status} response body from {url}: {e}"
-                ))
-            })?;
-            return Err(Error::Http {
-                status,
-                body: truncate(&body),
-            });
-        }
-        resp.body_mut()
-            .read_json::<T>()
-            .map_err(|e| Error::Parse(format!("decoding response from {url}: {e}")))
+        let resp = req.call()?;
+        read_ok(resp, &url)
+    }
+
+    /// Authenticated POST with a JSON body, decoding a JSON response.
+    fn post_json<B: Serialize, R: DeserializeOwned>(&self, path: &str, body: &B) -> Result<R> {
+        let url = format!("{}{}", self.server, path);
+        let resp = self
+            .agent
+            .post(&url)
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .send_json(body)?;
+        read_ok(resp, &url)
     }
 
     /// `GET /api/me` - identity / auth check.
@@ -201,6 +379,123 @@ impl Client {
             &[("title", title), ("author", author), ("provider", provider)],
         )
     }
+
+    /// `GET /api/libraries/{library}/items` with filter/sort/pagination, keeping
+    /// the pagination metadata.
+    pub fn items_list(&self, library: &str, params: &ItemsListParams) -> Result<ItemsListResponse> {
+        let owned = params.to_query_pairs();
+        let query: Vec<(&str, &str)> = owned.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        // Library IDs are trusted server-generated UUIDs from config; see items_page.
+        let path = format!("/api/libraries/{library}/items");
+        self.get_json(&path, &query)
+    }
+
+    /// `GET /api/items/{item_id}`, optionally expanded with audio files/chapters.
+    pub fn item_get(&self, item_id: &str, expanded: bool, include: Option<&str>) -> Result<Item> {
+        let mut owned: Vec<(&str, String)> = Vec::new();
+        if expanded {
+            owned.push(("expanded", "1".to_string()));
+        }
+        if let Some(include) = include {
+            owned.push(("include", include.to_string()));
+        }
+        let query: Vec<(&str, &str)> = owned.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        // item_id comes from the CLI; ABS item IDs are UUIDs, so a malformed value
+        // simply 404s rather than escaping the path.
+        let path = format!("/api/items/{item_id}");
+        self.get_json(&path, &query)
+    }
+
+    /// `POST /api/items/batch/get` - fetch multiple items by ID in one request.
+    ///
+    /// NOTE: response shape (`Vec<Item>`) not yet verified against a live server.
+    pub fn items_batch_get(&self, item_ids: &[&str]) -> Result<Vec<Item>> {
+        let body = serde_json::json!({ "libraryItemIds": item_ids });
+        self.post_json("/api/items/batch/get", &body)
+    }
+
+    /// `GET /api/libraries/{library}/search?q=` - in-library search.
+    pub fn search_library(&self, library: &str, query: &str) -> Result<LibrarySearchResponse> {
+        // Library IDs are trusted server-generated UUIDs from config; see items_page.
+        let path = format!("/api/libraries/{library}/search");
+        self.get_json(&path, &[("q", query)])
+    }
+
+    /// `GET /api/tasks` - current server tasks (unwraps the `{tasks:[...]}` object).
+    pub fn list_tasks(&self) -> Result<Vec<Task>> {
+        let resp: TasksResponse = self.get_json("/api/tasks", &[])?;
+        Ok(resp.tasks)
+    }
+
+    /// `GET /api/search/providers` - available metadata providers.
+    pub fn list_providers(&self) -> Result<Vec<ProviderInfo>> {
+        self.get_json("/api/search/providers", &[])
+    }
+
+    /// `GET /api/search/covers` - cover search for a title/author via a provider.
+    ///
+    /// NOTE: ABS streams cover results over Socket.IO; this HTTP call may return
+    /// partial/empty results. Endpoint + params unverified against a live server.
+    pub fn search_covers(
+        &self,
+        title: &str,
+        author: &str,
+        provider: &str,
+    ) -> Result<Vec<CoverResult>> {
+        self.get_json(
+            "/api/search/covers",
+            &[("title", title), ("author", author), ("provider", provider)],
+        )
+    }
+}
+
+/// Load the abs-cli config and return a [`Client`] (no library requirement).
+pub fn client_only() -> Result<Client> {
+    let cfg = AbsConfig::load()?;
+    Ok(Client::new(&cfg))
+}
+
+/// Load the config and return a [`Client`] plus the resolved default library.
+///
+/// Treats an empty or whitespace-only `defaultLibrary` as missing config, so a
+/// blank value can never produce a malformed `/api/libraries//items` path.
+pub fn connect() -> Result<(Client, String)> {
+    let cfg = AbsConfig::load()?;
+    let library = cfg
+        .default_library
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| Error::Config("no defaultLibrary set in abs-cli config".to_string()))?;
+    Ok((Client::new(&cfg), library))
+}
+
+/// Map a ureq response to a decoded value or the appropriate [`Error`]: 401/403
+/// -> [`Error::Auth`], other non-2xx -> [`Error::Http`] (truncated body), decode
+/// failure -> [`Error::Parse`].
+fn read_ok<R: DeserializeOwned>(
+    mut resp: ureq::http::Response<ureq::Body>,
+    url: &str,
+) -> Result<R> {
+    let status = resp.status().as_u16();
+    if status == 401 || status == 403 {
+        return Err(Error::Auth { status });
+    }
+    if !resp.status().is_success() {
+        let body = resp.body_mut().read_to_string().map_err(|e| {
+            Error::Connection(format!(
+                "reading HTTP {status} response body from {url}: {e}"
+            ))
+        })?;
+        return Err(Error::Http {
+            status,
+            body: truncate(&body),
+        });
+    }
+    resp.body_mut()
+        .read_json::<R>()
+        .map_err(|e| Error::Parse(format!("decoding response from {url}: {e}")))
 }
 
 /// Truncate an HTTP error body to a bounded snippet for error messages, on a
@@ -215,4 +510,50 @@ fn truncate(body: &str) -> String {
         .find(|&i| body.is_char_boundary(i))
         .unwrap_or(0);
     format!("{}...", &body[..end])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_query_omits_unset_and_false_fields() {
+        // Default params -> no query at all.
+        assert!(ItemsListParams::default().to_query_pairs().is_empty());
+
+        let params = ItemsListParams {
+            limit: Some(50),
+            page: Some(2),
+            sort: Some("media.metadata.title".to_string()),
+            desc: true,
+            filter: None,
+            minified: false,
+            include: Some("rssfeed".to_string()),
+        };
+        let q = params.to_query_pairs();
+        // Set fields present in declaration order; unset (filter) and false
+        // (minified) fields omitted; bools serialize as "1".
+        assert_eq!(
+            q,
+            vec![
+                ("limit", "50".to_string()),
+                ("page", "2".to_string()),
+                ("sort", "media.metadata.title".to_string()),
+                ("desc", "1".to_string()),
+                ("include", "rssfeed".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn truncate_respects_char_boundaries() {
+        let short = "héllo";
+        assert_eq!(truncate(short), short);
+
+        // A long multi-byte string must truncate on a char boundary (no panic).
+        let long = "é".repeat(400); // 800 bytes > MAX(500)
+        let out = truncate(&long);
+        assert!(out.ends_with("..."));
+        assert!(out.len() <= 500 + 3);
+    }
 }
