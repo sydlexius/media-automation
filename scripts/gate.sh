@@ -39,13 +39,16 @@ done
 #    test directory must be its own discovery start-dir -- a top-level
 #    `discover -s tools` finds nothing.
 section "python"
-if command -v ruff >/dev/null 2>&1; then
-  ruff check tools/
-else
+if [ ! -d tools ]; then
+  echo "tools/ not found; skipping Python checks"
+elif ! command -v ruff >/dev/null 2>&1; then
   echo "ruff not installed; skipping lint"
+else
+  ruff check tools/
 fi
 
-test_dirs=$(find tools -name 'test_*.py' -exec dirname {} \; 2>/dev/null | sort -u)
+test_dirs=""
+[ -d tools ] && test_dirs=$(find tools -name 'test_*.py' -exec dirname {} \; 2>/dev/null | sort -u)
 if [ -z "$test_dirs" ]; then
   echo "no Python unittest files found; skipping tests"
 else
