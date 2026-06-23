@@ -1,3 +1,7 @@
+# Floor the pre-commit client so dev and CI parse/run hooks identically and
+# older clients don't introduce behavior drift.
+minimum_pre_commit_version: "3.5.0"
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b # v5.0.0
