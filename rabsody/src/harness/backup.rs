@@ -32,30 +32,52 @@ impl BackupStore {
 
     /// Snapshot `item` (its full current JSON) before a write. Creates the
     /// backup directory on first use. Returns the file written. The filename is
-    /// millisecond-stamped, and a `-N` suffix is added if that name already
-    /// exists, so two snapshots of the same item (even within one millisecond)
-    /// never clobber each other.
+    /// millisecond-stamped with a `-N` suffix on collision, and each candidate
+    /// is opened with `create_new` (atomic create-or-fail), so concurrent
+    /// writers can never clobber each other's snapshot - no TOCTOU window.
     pub fn save_snapshot(&self, server: &str, item_id: &str, item: &Value) -> Result<PathBuf> {
+        use std::io::Write;
+
         std::fs::create_dir_all(&self.dir).map_err(|e| {
             Error::Config(format!("creating backup dir {}: {e}", self.dir.display()))
         })?;
+        let body = serde_json::to_string_pretty(item)
+            .map_err(|e| Error::Config(format!("serializing backup: {e}")))?;
         let base = format!(
             "{}_{}_{}",
             epoch_millis(),
             sanitize(server),
             sanitize(item_id)
         );
-        let mut path = self.dir.join(format!("{base}.json"));
-        let mut n = 1u32;
-        while path.exists() {
-            path = self.dir.join(format!("{base}-{n}.json"));
-            n += 1;
+
+        let mut n = 0u32;
+        loop {
+            let path = if n == 0 {
+                self.dir.join(format!("{base}.json"))
+            } else {
+                self.dir.join(format!("{base}-{n}.json"))
+            };
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut f) => {
+                    f.write_all(body.as_bytes()).map_err(|e| {
+                        Error::Config(format!("writing backup {}: {e}", path.display()))
+                    })?;
+                    return Ok(path);
+                }
+                // Name taken (possibly by a concurrent writer): try the next suffix.
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+                Err(e) => {
+                    return Err(Error::Config(format!(
+                        "creating backup {}: {e}",
+                        path.display()
+                    )));
+                }
+            }
         }
-        let body = serde_json::to_string_pretty(item)
-            .map_err(|e| Error::Config(format!("serializing backup: {e}")))?;
-        std::fs::write(&path, body)
-            .map_err(|e| Error::Config(format!("writing backup {}: {e}", path.display())))?;
-        Ok(path)
     }
 
     /// All snapshot files (`*.json`), sorted (the `{epoch}` prefix makes this
@@ -159,6 +181,31 @@ mod tests {
             std::fs::read_to_string(&p2).unwrap().contains("\"v\": 2"),
             true
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn concurrent_snapshots_never_clobber() {
+        use std::sync::Arc;
+        let dir = std::env::temp_dir().join(format!("rabs-bk-conc-{}", std::process::id()));
+        let store = Arc::new(BackupStore::with_dir(dir.clone()));
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let s = Arc::clone(&store);
+                std::thread::spawn(move || {
+                    s.save_snapshot("s", "li_1", &serde_json::json!({ "i": i }))
+                        .unwrap()
+                })
+            })
+            .collect();
+        let paths: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let distinct: std::collections::HashSet<_> = paths.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            8,
+            "every concurrent snapshot is a distinct file"
+        );
+        assert_eq!(store.list_backups().unwrap().len(), 8);
         std::fs::remove_dir_all(&dir).ok();
     }
 
