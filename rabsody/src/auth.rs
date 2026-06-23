@@ -14,8 +14,12 @@ use crate::error::{Error, Result};
 pub enum ConfigCmd {
     /// Print the resolved config (tokens redacted).
     Get,
-    /// Set a value: `server`, `library`, or `token`.
-    Set { key: ConfigKey, value: String },
+    /// Set a value: `server`, `library`, or `token`. Omit `value` for `token`
+    /// to be prompted securely instead of exposing it in argv/shell history.
+    Set {
+        key: ConfigKey,
+        value: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -76,17 +80,36 @@ pub fn config(cmd: ConfigCmd) -> Result<()> {
             let path = StoredConfig::native_path()?;
             // Seed from the current effective config (native or abs-cli) so a
             // first `config set` graduates it to native without losing fields.
-            let mut config = Credentials::load().map(|c| c.config).unwrap_or_default();
+            // Default only when no config exists yet; a real load failure
+            // (malformed/unreadable) must surface rather than clobber the file.
+            let mut config = if path.exists() || StoredConfig::abscli_path()?.exists() {
+                Credentials::load()?.config
+            } else {
+                StoredConfig::default()
+            };
             match key {
-                ConfigKey::Server => config.server = value,
-                ConfigKey::Library => config.default_library = Some(value),
-                ConfigKey::Token => config.access_token = value,
+                ConfigKey::Server => config.server = require_value(key, value)?,
+                ConfigKey::Library => config.default_library = Some(require_value(key, value)?),
+                // Prompt securely when no value is given so tokens stay out of
+                // shell history and process listings.
+                ConfigKey::Token => {
+                    config.access_token = match value {
+                        Some(value) => value,
+                        None => rpassword::prompt_password("Access token: ")
+                            .map_err(|e| Error::Config(format!("reading token: {e}")))?,
+                    }
+                }
             }
             config::save(&config, &path)?;
             println!("updated {} in {}", key.as_str(), path.display());
             Ok(())
         }
     }
+}
+
+/// Non-token keys require an explicit value; only `token` may be prompted.
+fn require_value(key: ConfigKey, value: Option<String>) -> Result<String> {
+    value.ok_or_else(|| Error::Config(format!("`config set {}` requires a value", key.as_str())))
 }
 
 fn redacted(present: bool) -> &'static str {

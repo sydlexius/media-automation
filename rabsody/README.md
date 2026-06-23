@@ -10,10 +10,11 @@ field hygiene, age/AR enrichment).
 
 ## Status: reads-first
 
-The tool is being built **reads-first** - every implemented command is read-only,
-so there is currently zero risk to a live library. Write commands (metadata edits,
-chapter writes, embed/encode) land only after the shared write harness (dry-run +
-backup + ledger) and per-command safety gates exist.
+The tool is being built **reads-first** - no implemented command mutates the ABS
+library, so there is currently zero risk to a live library. (`login` and
+`config set` write only the local credential file.) Library-write commands
+(metadata edits, chapter writes, embed/encode) land only after the shared write
+harness (dry-run + backup + ledger) and per-command safety gates exist.
 
 Implemented today:
 

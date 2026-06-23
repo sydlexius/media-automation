@@ -111,17 +111,22 @@ pub fn save(config: &StoredConfig, path: &Path) -> Result<()> {
 /// [`StoredConfig`]; for JSON it merges to keep any extra abs-cli keys.
 pub fn persist_tokens(path: &Path, access: &str, refresh: Option<&str>) -> Result<()> {
     if is_toml(path) {
-        let mut config = StoredConfig::load_path(path).unwrap_or_default();
+        // Don't default on a read/parse failure: that would drop
+        // `server`/`defaultLibrary` and persist a stripped config. Bail and
+        // leave the file intact instead.
+        let mut config = StoredConfig::load_path(path)?;
         config.access_token = access.to_string();
         if let Some(refresh) = refresh {
             config.refresh_token = Some(refresh.to_string());
         }
         return save(&config, path);
     }
-    let mut value: serde_json::Value = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    // Same hazard for JSON: surface read/parse errors rather than clobbering the
+    // file with a tokens-only object.
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| Error::Config(format!("reading config at {}: {e}", path.display())))?;
+    let mut value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| Error::Config(format!("parsing JSON config at {}: {e}", path.display())))?;
     let obj = value.as_object_mut().ok_or_else(|| {
         Error::Config(format!("config at {} is not a JSON object", path.display()))
     })?;
@@ -145,14 +150,28 @@ fn write_secret(path: &Path, body: &str) -> Result<()> {
         std::fs::create_dir_all(parent)
             .map_err(|e| Error::Config(format!("creating config dir {}: {e}", parent.display())))?;
     }
-    std::fs::write(path, body)
-        .map_err(|e| Error::Config(format!("writing config at {}: {e}", path.display())))?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        // Best-effort: tokens live here, so restrict to the owner.
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        // Create with 0600 up front so the token file is never momentarily
+        // group/world-readable. `.mode()` is ignored for an existing file, so
+        // also reset perms explicitly to narrow a pre-existing looser file.
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| Error::Config(format!("writing config at {}: {e}", path.display())))?;
+        f.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| Error::Config(format!("securing config at {}: {e}", path.display())))?;
+        f.write_all(body.as_bytes())
+            .map_err(|e| Error::Config(format!("writing config at {}: {e}", path.display())))?;
     }
+    #[cfg(not(unix))]
+    std::fs::write(path, body)
+        .map_err(|e| Error::Config(format!("writing config at {}: {e}", path.display())))?;
     Ok(())
 }
 
@@ -205,6 +224,22 @@ mod tests {
         assert_eq!(v["refreshToken"], "newrt");
         assert_eq!(v["extra"], "keep"); // unrelated abs-cli key preserved
         assert_eq!(v["defaultLibrary"], "L");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn persist_tokens_errors_instead_of_clobbering_missing_file() {
+        // A read failure must surface, not silently write a tokens-only config
+        // (which would drop server/defaultLibrary). The file must stay absent.
+        let dir = std::env::temp_dir().join(format!("rabsody-cfgmiss-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let toml_path = dir.join("missing.toml");
+        let json_path = dir.join("missing.json");
+
+        assert!(persist_tokens(&toml_path, "atk", Some("rt")).is_err());
+        assert!(persist_tokens(&json_path, "atk", Some("rt")).is_err());
+        assert!(!toml_path.exists());
+        assert!(!json_path.exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 }
