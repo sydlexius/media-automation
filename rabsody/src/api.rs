@@ -9,6 +9,8 @@
 //! them. Dead-code is allowed here (real dead-code is still caught in `main`).
 #![allow(dead_code)]
 
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -101,8 +103,16 @@ pub struct Client {
 
 impl Client {
     pub fn new(cfg: &AbsConfig) -> Self {
+        // Explicit timeouts so a slow or half-open server can never hang the
+        // CLI (or a CI job) indefinitely: bounded TCP/TLS connect plus an
+        // end-to-end ceiling covering the whole call including body read.
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build()
+            .into();
         Self {
-            agent: ureq::Agent::new_with_defaults(),
+            agent,
             server: cfg.server.trim_end_matches('/').to_string(),
             token: cfg.access_token.clone(),
         }
