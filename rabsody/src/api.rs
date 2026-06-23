@@ -483,11 +483,18 @@ fn read_ok<R: DeserializeOwned>(
         return Err(Error::Auth { status });
     }
     if !resp.status().is_success() {
-        let body = resp.body_mut().read_to_string().map_err(|e| {
-            Error::Connection(format!(
-                "reading HTTP {status} response body from {url}: {e}"
-            ))
-        })?;
+        // Bound the read: only a 500-char snippet is kept, so cap well below
+        // ureq's 10 MB default to avoid buffering a huge error payload.
+        let body = resp
+            .body_mut()
+            .with_config()
+            .limit(64 * 1024)
+            .read_to_string()
+            .map_err(|e| {
+                Error::Connection(format!(
+                    "reading HTTP {status} response body from {url}: {e}"
+                ))
+            })?;
         return Err(Error::Http {
             status,
             body: truncate(&body),
@@ -515,6 +522,72 @@ fn truncate(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serve one canned raw HTTP response on a loopback port, then close.
+    /// The OS backlog queues the client's connect, so there is no startup race.
+    fn serve_once(raw: &'static str) -> u16 {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf); // drain request line/headers
+                let _ = stream.write_all(raw.as_bytes());
+            }
+        });
+        port
+    }
+
+    fn client_for(port: u16) -> Client {
+        Client::new(&AbsConfig {
+            server: format!("http://127.0.0.1:{port}"),
+            access_token: "test-token".to_string(),
+            default_library: None,
+        })
+    }
+
+    #[test]
+    fn read_ok_maps_401_403_to_auth() {
+        for status in [401u16, 403] {
+            let raw: &'static str = if status == 401 {
+                "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            } else {
+                "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            };
+            let client = client_for(serve_once(raw));
+            match client.me() {
+                Err(Error::Auth { status: s }) => assert_eq!(s, status),
+                other => panic!("expected Auth {status}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn read_ok_maps_non_2xx_to_http_with_body() {
+        let port = serve_once(
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 4\r\nConnection: close\r\n\r\nboom",
+        );
+        match client_for(port).me() {
+            Err(Error::Http { status, body }) => {
+                assert_eq!(status, 500);
+                assert_eq!(body, "boom");
+            }
+            other => panic!("expected Http 500, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_ok_maps_bad_json_to_parse() {
+        let port = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 7\r\nConnection: close\r\n\r\nnotjson",
+        );
+        match client_for(port).me() {
+            Err(Error::Parse(_)) => {}
+            other => panic!("expected Parse, got {other:?}"),
+        }
+    }
 
     #[test]
     fn list_query_omits_unset_and_false_fields() {

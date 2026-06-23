@@ -95,10 +95,12 @@ impl<'a> TaskPoller<'a> {
             if tasks_drained(&self.client.list_tasks()?) {
                 return Ok(WaitResult::Drained);
             }
-            if Instant::now() >= deadline {
+            let now = Instant::now();
+            if now >= deadline {
                 return Ok(WaitResult::Timeout);
             }
-            std::thread::sleep(self.interval);
+            // Never sleep past the deadline (avoids oversleeping in tight windows).
+            std::thread::sleep(self.interval.min(deadline - now));
         }
     }
 }
