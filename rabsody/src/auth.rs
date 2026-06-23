@@ -30,9 +30,12 @@ pub fn login(server: Option<String>, username: String, password: Option<String>)
     let server = match server {
         Some(server) => server,
         // Fall back to the server already in config so `rabs login --username x`
-        // works once a server is known.
-        None => Credentials::load().map(|c| c.config.server).map_err(|_| {
-            Error::Config("no --server given and no existing config to infer it from".to_string())
+        // works once a server is known. Preserve the load error so a genuine
+        // unreadable/malformed config is distinguishable from "no config yet".
+        None => Credentials::load().map(|c| c.config.server).map_err(|e| {
+            Error::Config(format!(
+                "no --server given and could not load an existing config to infer it: {e}"
+            ))
         })?,
     };
     let password = match password {
