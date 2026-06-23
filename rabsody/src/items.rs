@@ -181,8 +181,10 @@ fn run_update(
         item_id: id.clone(),
         label: title_of(&current),
         operation: "metadata".to_string(),
-        before: serde_json::to_value(&current).unwrap_or(serde_json::Value::Null),
-        after: serde_json::to_value(&patch).unwrap_or(serde_json::Value::Null),
+        before: serde_json::to_value(&current)
+            .map_err(|e| Error::Config(format!("serializing current item: {e}")))?,
+        after: serde_json::to_value(&patch)
+            .map_err(|e| Error::Config(format!("serializing patch: {e}")))?,
     };
 
     if patch.is_empty() {
@@ -191,7 +193,7 @@ fn run_update(
         return Ok(());
     }
 
-    let outcome = ctx.execute(&req, || client.item_update_media(&id, &patch));
+    let outcome = ctx.execute(&req, || client.item_update_media(&id, &patch))?;
     println!("{}", preview::format_line(&req, &outcome));
     if !ctx.should_apply() {
         println!("(dry-run; re-run with --apply to write)");
@@ -238,8 +240,10 @@ fn run_batch_update(
             item_id: entry.id.clone(),
             label: title_of(cur),
             operation: "metadata".to_string(),
-            before: serde_json::to_value(cur).unwrap_or(serde_json::Value::Null),
-            after: serde_json::to_value(&patch).unwrap_or(serde_json::Value::Null),
+            before: serde_json::to_value(cur)
+                .map_err(|e| Error::Config(format!("serializing item {}: {e}", entry.id)))?,
+            after: serde_json::to_value(&patch)
+                .map_err(|e| Error::Config(format!("serializing patch for {}: {e}", entry.id)))?,
         });
         updates.push(BatchItemUpdate {
             id: entry.id.clone(),
@@ -253,7 +257,7 @@ fn run_batch_update(
     }
 
     let ctx = WriteContext::new(write.apply)?;
-    let outcomes = ctx.execute_batch(&reqs, || client.items_batch_update(&updates).map(|_| ()));
+    let outcomes = ctx.execute_batch(&reqs, || client.items_batch_update(&updates).map(|_| ()))?;
     for (req, outcome) in reqs.iter().zip(&outcomes) {
         println!("{}", preview::format_line(req, outcome));
     }
@@ -288,7 +292,8 @@ fn run_batch_update_progress(file: String, write: WriteOpts) -> Result<()> {
             operation: "progress".to_string(),
             // Progress has no cheap pre-image here; record the requested change.
             before: serde_json::Value::Null,
-            after: serde_json::to_value(&entry.fields).unwrap_or(serde_json::Value::Null),
+            after: serde_json::to_value(&entry.fields)
+                .map_err(|e| Error::Config(format!("serializing progress fields: {e}")))?,
         });
         updates.push(ProgressUpdate {
             library_item_id: entry.library_item_id.clone(),
@@ -297,7 +302,7 @@ fn run_batch_update_progress(file: String, write: WriteOpts) -> Result<()> {
     }
 
     let ctx = WriteContext::new(write.apply)?;
-    let outcomes = ctx.execute_batch(&reqs, || client.batch_update_progress(&updates));
+    let outcomes = ctx.execute_batch(&reqs, || client.batch_update_progress(&updates))?;
     for (req, outcome) in reqs.iter().zip(&outcomes) {
         println!("{}", preview::format_line(req, outcome));
     }

@@ -197,14 +197,24 @@ impl WriteContext {
 
     /// Run one write under harness policy.
     ///
-    /// Dry-run: returns [`WriteOutcome::WouldApply`] without touching the server,
-    /// the backup store, or the ledger. Apply: snapshots `req.before` first and
-    /// **aborts** (returning [`WriteOutcome::Error`]) if that backup fails, then
-    /// runs `write`, then records the attempt to the ledger (a ledger failure is
-    /// logged but does not change the outcome).
-    pub fn execute(&self, req: &WriteRequest, write: impl FnOnce() -> Result<()>) -> WriteOutcome {
+    /// Dry-run: `Ok(WriteOutcome::WouldApply)` without touching the server, the
+    /// backup store, or the ledger. Apply: snapshots `req.before` first and
+    /// reports `Ok(WriteOutcome::Error)` if that backup fails (write aborted),
+    /// then runs `write` and records the attempt to the ledger (a ledger failure
+    /// is logged, not propagated).
+    ///
+    /// An **auth failure** (`Error::Auth`) from the write is returned as `Err`,
+    /// not collapsed into a per-item `WriteOutcome::Error` string, so callers
+    /// fail fast (non-zero exit) instead of masking a 401/403 as a transient,
+    /// per-item error while the CLI still exits 0. Other write errors stay
+    /// `Ok(WriteOutcome::Error)`.
+    pub fn execute(
+        &self,
+        req: &WriteRequest,
+        write: impl FnOnce() -> Result<()>,
+    ) -> Result<WriteOutcome> {
         if !self.apply {
-            return WriteOutcome::WouldApply;
+            return Ok(WriteOutcome::WouldApply);
         }
 
         // Fail-safe: never mutate the server if we couldn't capture a revertable
@@ -213,16 +223,31 @@ impl WriteContext {
             .backup
             .save_snapshot(&req.server, &req.item_id, &req.before)
         {
-            return WriteOutcome::Error(format!("backup failed, write aborted: {e}"));
+            return Ok(WriteOutcome::Error(format!(
+                "backup failed, write aborted: {e}"
+            )));
         }
 
-        let outcome = match write() {
+        let result = write();
+        let outcome = match &result {
             Ok(()) => WriteOutcome::Applied,
             Err(e) => WriteOutcome::Error(e.to_string()),
         };
 
         // Fail-open: an unwritable ledger must not lose a write that already
         // happened, so record-failures are logged, not propagated.
+        self.record(req, &outcome);
+
+        // Fail-fast on auth so a 401/403 is never reported as a per-item error
+        // with a successful process exit.
+        match result {
+            Err(e @ Error::Auth { .. }) => Err(e),
+            _ => Ok(outcome),
+        }
+    }
+
+    /// Append one ledger entry for `req`/`outcome` (fail-open).
+    fn record(&self, req: &WriteRequest, outcome: &WriteOutcome) {
         let record = WriteRecord {
             ts: epoch_secs(),
             server: req.server.clone(),
@@ -230,7 +255,7 @@ impl WriteContext {
             operation: req.operation.clone(),
             before: req.before.clone(),
             after: req.after.clone(),
-            outcome: match &outcome {
+            outcome: match outcome {
                 WriteOutcome::Error(e) => format!("error: {e}"),
                 other => other.label().to_string(),
             },
@@ -238,8 +263,6 @@ impl WriteContext {
         if let Err(e) = self.ledger.append(&record) {
             log::error!("ledger append failed (non-fatal): {e}");
         }
-
-        outcome
     }
 
     /// Run an *atomic* batch write under harness policy: one server call covers
@@ -251,9 +274,14 @@ impl WriteContext {
         &self,
         reqs: &[WriteRequest],
         write: impl FnOnce() -> Result<()>,
-    ) -> Vec<WriteOutcome> {
+    ) -> Result<Vec<WriteOutcome>> {
+        // Nothing to do: never invoke the write closure for an empty batch (it
+        // would fire an empty server call and have nowhere to surface an error).
+        if reqs.is_empty() {
+            return Ok(Vec::new());
+        }
         if !self.apply {
-            return reqs.iter().map(|_| WriteOutcome::WouldApply).collect();
+            return Ok(reqs.iter().map(|_| WriteOutcome::WouldApply).collect());
         }
 
         // Fail-safe: back up every item before the atomic write; if any snapshot
@@ -264,10 +292,10 @@ impl WriteContext {
                 .save_snapshot(&req.server, &req.item_id, &req.before)
             {
                 let msg = format!("backup failed for {}, batch aborted: {e}", req.item_id);
-                return reqs
+                return Ok(reqs
                     .iter()
                     .map(|_| WriteOutcome::Error(msg.clone()))
-                    .collect();
+                    .collect());
             }
         }
 
@@ -278,24 +306,15 @@ impl WriteContext {
         };
 
         for req in reqs {
-            let record = WriteRecord {
-                ts: epoch_secs(),
-                server: req.server.clone(),
-                item_id: req.item_id.clone(),
-                operation: req.operation.clone(),
-                before: req.before.clone(),
-                after: req.after.clone(),
-                outcome: match &outcome {
-                    WriteOutcome::Error(e) => format!("error: {e}"),
-                    other => other.label().to_string(),
-                },
-            };
-            if let Err(e) = self.ledger.append(&record) {
-                log::error!("ledger append failed (non-fatal): {e}");
-            }
+            self.record(req, &outcome);
         }
 
-        reqs.iter().map(|_| outcome.clone()).collect()
+        // Fail-fast on auth (see `execute`); otherwise report the shared outcome
+        // for every item in the batch.
+        match result {
+            Err(e @ Error::Auth { .. }) => Err(e),
+            _ => Ok(reqs.iter().map(|_| outcome.clone()).collect()),
+        }
     }
 }
 
@@ -355,10 +374,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rabs-h-dry-{}", std::process::id()));
         let ctx = temp_ctx(false, &dir);
         let called = Cell::new(false);
-        let outcome = ctx.execute(&req("1"), || {
-            called.set(true);
-            Ok(())
-        });
+        let outcome = ctx
+            .execute(&req("1"), || {
+                called.set(true);
+                Ok(())
+            })
+            .unwrap();
         assert_eq!(outcome, WriteOutcome::WouldApply);
         assert!(!called.get(), "write callback must not run in dry-run");
         // Nothing persisted.
@@ -371,10 +392,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rabs-h-apply-{}", std::process::id()));
         let ctx = temp_ctx(true, &dir);
         let called = Cell::new(false);
-        let outcome = ctx.execute(&req("42"), || {
-            called.set(true);
-            Ok(())
-        });
+        let outcome = ctx
+            .execute(&req("42"), || {
+                called.set(true);
+                Ok(())
+            })
+            .unwrap();
         assert_eq!(outcome, WriteOutcome::Applied);
         assert!(called.get());
 
@@ -395,16 +418,31 @@ mod tests {
     fn apply_records_write_error_in_ledger() {
         let dir = std::env::temp_dir().join(format!("rabs-h-err-{}", std::process::id()));
         let ctx = temp_ctx(true, &dir);
-        let outcome = ctx.execute(&req("7"), || {
-            Err(Error::Http {
-                status: 500,
-                body: "boom".to_string(),
+        let outcome = ctx
+            .execute(&req("7"), || {
+                Err(Error::Http {
+                    status: 500,
+                    body: "boom".to_string(),
+                })
             })
-        });
+            .unwrap();
         assert!(matches!(outcome, WriteOutcome::Error(_)));
         let records = ctx.ledger.read_all().unwrap();
         assert_eq!(records.len(), 1);
         assert!(records[0].outcome.starts_with("error:"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn apply_propagates_auth_error_for_fail_fast() {
+        let dir = std::env::temp_dir().join(format!("rabs-h-auth-{}", std::process::id()));
+        let ctx = temp_ctx(true, &dir);
+        // A 401/403 must surface as Err (so the CLI exits non-zero), not as an
+        // Ok(WriteOutcome::Error) that the caller could print and still exit 0.
+        let result = ctx.execute(&req("9"), || Err(Error::Auth { status: 401 }));
+        assert!(matches!(result, Err(Error::Auth { status: 401 })));
+        // The attempt is still recorded in the ledger before failing fast.
+        assert_eq!(ctx.ledger.read_all().unwrap().len(), 1);
         std::fs::remove_dir_all(&dir).ok();
     }
 }
