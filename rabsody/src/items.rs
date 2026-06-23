@@ -222,22 +222,23 @@ fn run_batch_update(
     let mut updates = Vec::new();
     let mut reqs = Vec::new();
     for entry in &entries {
-        let cur = current.iter().find(|i| i.id == entry.id);
+        // Skip IDs the server didn't return: snapshotting a null pre-image and
+        // writing to a non-existent item is meaningless and pollutes the ledger.
+        let Some(cur) = current.iter().find(|i| i.id == entry.id) else {
+            eprintln!("warning: item {} not found; skipping", entry.id);
+            continue;
+        };
         let mut patch = entry.patch.clone();
-        if let Some(cur) = cur {
-            merge_arrays(&mut patch, cur, replace_tags, replace_genres);
-        }
+        merge_arrays(&mut patch, cur, replace_tags, replace_genres);
         if patch.is_empty() {
             continue;
         }
         reqs.push(WriteRequest {
             server: client.server().to_string(),
             item_id: entry.id.clone(),
-            label: cur.map(title_of).unwrap_or_else(|| entry.id.clone()),
+            label: title_of(cur),
             operation: "metadata".to_string(),
-            before: cur
-                .and_then(|c| serde_json::to_value(c).ok())
-                .unwrap_or(serde_json::Value::Null),
+            before: serde_json::to_value(cur).unwrap_or(serde_json::Value::Null),
             after: serde_json::to_value(&patch).unwrap_or(serde_json::Value::Null),
         });
         updates.push(BatchItemUpdate {

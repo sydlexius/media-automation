@@ -1,12 +1,14 @@
 //! Pre-write snapshots. Before any applied write, the item's current JSON is
 //! saved here so a future `revert` can restore it. Snapshots are plain JSON
-//! files named `{epoch}_{server}_{itemId}.json` under `<data-dir>/rabsody/backups/`.
+//! files named `{epochMillis}_{server}_{itemId}.json` under
+//! `<data-dir>/rabsody/backups/` (with a `-N` suffix on the rare same-millis
+//! collision), so repeated snapshots of one item never overwrite each other.
 
 use std::path::PathBuf;
 
 use serde_json::Value;
 
-use super::{data_root, epoch_secs};
+use super::{data_root, epoch_millis};
 use crate::error::{Error, Result};
 
 /// Manages the backup directory and snapshot files.
@@ -29,18 +31,26 @@ impl BackupStore {
     }
 
     /// Snapshot `item` (its full current JSON) before a write. Creates the
-    /// backup directory on first use. Returns the file written.
+    /// backup directory on first use. Returns the file written. The filename is
+    /// millisecond-stamped, and a `-N` suffix is added if that name already
+    /// exists, so two snapshots of the same item (even within one millisecond)
+    /// never clobber each other.
     pub fn save_snapshot(&self, server: &str, item_id: &str, item: &Value) -> Result<PathBuf> {
         std::fs::create_dir_all(&self.dir).map_err(|e| {
             Error::Config(format!("creating backup dir {}: {e}", self.dir.display()))
         })?;
-        let name = format!(
-            "{}_{}_{}.json",
-            epoch_secs(),
+        let base = format!(
+            "{}_{}_{}",
+            epoch_millis(),
             sanitize(server),
             sanitize(item_id)
         );
-        let path = self.dir.join(name);
+        let mut path = self.dir.join(format!("{base}.json"));
+        let mut n = 1u32;
+        while path.exists() {
+            path = self.dir.join(format!("{base}-{n}.json"));
+            n += 1;
+        }
         let body = serde_json::to_string_pretty(item)
             .map_err(|e| Error::Config(format!("serializing backup: {e}")))?;
         std::fs::write(&path, body)
@@ -126,6 +136,29 @@ mod tests {
         let name = path.file_name().unwrap().to_str().unwrap();
         assert_eq!(store.get_backup(name).unwrap(), item);
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn repeated_snapshots_do_not_overwrite() {
+        let dir = std::env::temp_dir().join(format!("rabs-bk-dup-{}", std::process::id()));
+        let store = BackupStore::with_dir(dir.clone());
+        let a = serde_json::json!({"v": 1});
+        let b = serde_json::json!({"v": 2});
+        // Same server/item, back-to-back (same second, likely same millisecond).
+        let p1 = store.save_snapshot("s", "li_1", &a).unwrap();
+        let p2 = store.save_snapshot("s", "li_1", &b).unwrap();
+        assert_ne!(p1, p2, "two snapshots must be distinct files");
+        assert_eq!(store.list_backups().unwrap().len(), 2);
+        // Both snapshots preserved (no clobber).
+        assert_eq!(
+            std::fs::read_to_string(&p1).unwrap().contains("\"v\": 1"),
+            true
+        );
+        assert_eq!(
+            std::fs::read_to_string(&p2).unwrap().contains("\"v\": 2"),
+            true
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -154,6 +154,15 @@ pub(crate) fn epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// Current Unix time in milliseconds (0 if the clock predates the epoch). Used
+/// for backup filenames, where second precision can collide within one second.
+pub(crate) fn epoch_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
 /// Owns write policy: apply-vs-dry-run, the backup store, and the ledger.
 pub struct WriteContext {
     apply: bool,

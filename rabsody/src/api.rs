@@ -158,19 +158,31 @@ pub struct MediaPatch {
     pub tags: Option<Vec<String>>,
 }
 
+impl MetadataPatch {
+    /// True when no field is set (would serialize to `{}`). Direct field checks
+    /// avoid a serde round-trip allocation on every item.
+    fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.subtitle.is_none()
+            && self.author_name.is_none()
+            && self.narrator_name.is_none()
+            && self.series_name.is_none()
+            && self.publisher.is_none()
+            && self.published_year.is_none()
+            && self.description.is_none()
+            && self.isbn.is_none()
+            && self.asin.is_none()
+            && self.language.is_none()
+            && self.abridged.is_none()
+            && self.explicit.is_none()
+            && self.genres.is_none()
+    }
+}
+
 impl MediaPatch {
     /// True when nothing would be sent (no metadata fields and no tags).
     pub fn is_empty(&self) -> bool {
-        self.tags.is_none()
-            && self
-                .metadata
-                .as_ref()
-                .map(|m| {
-                    serde_json::to_value(m)
-                        .map(|v| v == serde_json::json!({}))
-                        .unwrap_or(false)
-                })
-                .unwrap_or(true)
+        self.tags.is_none() && self.metadata.as_ref().map(|m| m.is_empty()).unwrap_or(true)
     }
 }
 
