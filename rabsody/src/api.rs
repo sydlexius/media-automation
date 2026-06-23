@@ -140,7 +140,11 @@ impl Client {
             return Err(Error::Auth { status });
         }
         if !resp.status().is_success() {
-            let body = resp.body_mut().read_to_string().unwrap_or_default();
+            let body = resp.body_mut().read_to_string().map_err(|e| {
+                Error::Connection(format!(
+                    "reading HTTP {status} response body from {url}: {e}"
+                ))
+            })?;
             return Err(Error::Http {
                 status,
                 body: truncate(&body),

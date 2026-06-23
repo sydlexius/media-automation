@@ -27,6 +27,9 @@ pub enum Error {
     Connection(String),
     /// Response body was not the expected JSON shape.
     Parse(String),
+    /// A planned-but-unimplemented command family was invoked. Returned so the
+    /// process exits non-zero instead of looking successful to scripts/CI.
+    Unsupported(String),
 }
 
 impl fmt::Display for Error {
@@ -40,6 +43,7 @@ impl fmt::Display for Error {
             Self::Http { status, body } => write!(f, "HTTP {status}: {body}"),
             Self::Connection(msg) => write!(f, "connection error: {msg}"),
             Self::Parse(msg) => write!(f, "parse error: {msg}"),
+            Self::Unsupported(msg) => write!(f, "{msg}"),
         }
     }
 }

@@ -73,9 +73,13 @@ fn run() -> Result<()> {
         Command::Doctor => doctor(),
         Command::Report(ReportCmd::Stats) => report_stats(),
         Command::Asin(_) | Command::Chapters(_) | Command::Metadata(_) | Command::Fields(_) => {
-            println!("This command family is planned but not yet implemented.");
-            println!("RABSody is being migrated reads-first; see README for the roadmap.");
-            Ok(())
+            // Exit non-zero so scripts/CI don't read an unimplemented family as
+            // a successful no-op.
+            Err(Error::Unsupported(
+                "this command family is planned but not yet implemented; \
+                 RABSody is migrating reads-first, see the README roadmap"
+                    .to_string(),
+            ))
         }
     }
 }
