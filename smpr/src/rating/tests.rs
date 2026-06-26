@@ -132,6 +132,38 @@ fn filter_location_empty_when_no_match() {
 }
 
 #[test]
+fn filter_location_empty_on_mount_view_mismatch() {
+    // The real-world trigger for the empty-match WARN: posix location prefix vs
+    // UNC-style item paths share no prefix, so the filter returns empty.
+    let items = vec![
+        audio_item("1", r"\\outatime\Music\Bach\air.flac"),
+        audio_item("2", r"\\outatime\Music\Mozart\k525.flac"),
+    ];
+    let filtered = scope::filter_by_location(items, "/share/Classical");
+    assert!(filtered.is_empty());
+}
+
+#[test]
+fn sample_path_roots_dedups_and_caps() {
+    let items = vec![
+        audio_item("1", r"\\outatime\Music\Bach\air.flac"),
+        audio_item("2", r"\\outatime\Music\Mozart\k525.flac"),
+        audio_item("3", "/share/Classical/x.flac"),
+    ];
+    let roots = scope::sample_path_roots(&items);
+    // UNC paths collapse to one root; posix path is a distinct root. Leading
+    // markers are preserved so UNC (`//`) and POSIX (`/`) stay distinguishable.
+    assert_eq!(
+        roots,
+        vec![
+            "//outatime/music".to_string(),
+            "/share/classical".to_string()
+        ]
+    );
+    assert!(roots.len() <= 5);
+}
+
+#[test]
 fn filter_location_trailing_slash() {
     let items = vec![audio_item("1", "/music/classical/bach.flac")];
     let filtered = scope::filter_by_location(items, "/music/classical/");
@@ -464,6 +496,18 @@ fn summary_counts_actions() {
             source: Source::Genre,
             server_name: "s".into(),
         },
+        ItemResult {
+            item_id: "8".into(),
+            path: None,
+            artist: None,
+            album: None,
+            tier: None,
+            matched_words: vec!["Soundtrack".into()],
+            previous_rating: None,
+            action: RatingAction::Review,
+            source: Source::Genre,
+            server_name: "s".into(),
+        },
     ];
     let counts = SummaryCounts::from_results(&results);
     assert_eq!(counts.lyrics_evaluated, 4); // source=Lyrics, excluding no-lyrics skip (#6)
@@ -477,6 +521,7 @@ fn summary_counts_actions() {
     assert_eq!(counts.g_genre_already, 1); // action=AlreadyCorrect, source=Genre
     assert_eq!(counts.dry_run, 1);
     assert_eq!(counts.skipped, 1);
+    assert_eq!(counts.needs_review, 1); // action=Review (deny_genres veto), not counted as skipped
     assert_eq!(counts.errors, 0);
 }
 
@@ -515,6 +560,7 @@ mod integration {
                 pg13_exact: vec!["hoe".into()],
                 false_positives: vec!["cocktail".into()],
                 g_genres: vec!["Classical".into()],
+                deny_genres: vec![],
             },
             overwrite: true,
             dry_run: true,
