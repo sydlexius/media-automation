@@ -492,6 +492,18 @@ fn summary_counts_actions() {
             source: Source::Genre,
             server_name: "s".into(),
         },
+        ItemResult {
+            item_id: "8".into(),
+            path: None,
+            artist: None,
+            album: None,
+            tier: None,
+            matched_words: vec!["Soundtrack".into()],
+            previous_rating: None,
+            action: RatingAction::Review,
+            source: Source::Genre,
+            server_name: "s".into(),
+        },
     ];
     let counts = SummaryCounts::from_results(&results);
     assert_eq!(counts.lyrics_evaluated, 4); // source=Lyrics, excluding no-lyrics skip (#6)
@@ -505,6 +517,7 @@ fn summary_counts_actions() {
     assert_eq!(counts.g_genre_already, 1); // action=AlreadyCorrect, source=Genre
     assert_eq!(counts.dry_run, 1);
     assert_eq!(counts.skipped, 1);
+    assert_eq!(counts.needs_review, 1); // action=Review (deny_genres veto), not counted as skipped
     assert_eq!(counts.errors, 0);
 }
 

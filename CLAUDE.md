@@ -140,7 +140,7 @@ All three workflows follow the same pattern: resolve library scope → prefetch 
 
 **Library scoping** (`rating/scope.rs`): `resolve_from_libraries` resolves `--library` and `--location` flags against `VirtualFolder` data. `filter_by_location` is a post-prefetch, case-insensitive, separator-normalized path-prefix filter against each item's reported `Path`. When a resolved `--location` filters a non-empty set down to zero, it emits a `log::warn!` (visible at the default log level) naming the prefix used and sample real item path roots, because that almost always means the item paths use a different mount view than the library location (e.g. UNC `\\host\share` vs posix `/share`) rather than a genuinely empty folder. `lookup_force_rating` resolves config-level force ratings with precedence: location > library.
 
-**Result types**: `ItemResult` captures item metadata, tier, matched words, previous rating, action taken, source (Lyrics/Genre/Force/Reset), and server name. `RatingAction` enum: Set, Cleared, Skipped, AlreadyCorrect, DryRun, DryRunClear, Error.
+**Result types**: `ItemResult` captures item metadata, tier, matched words, previous rating, action taken, source (Lyrics/Genre/Force/Reset), and server name. `RatingAction` enum: Set, Cleared, Skipped, AlreadyCorrect, DryRun, DryRunClear, Review (genre-G vetoed by `deny_genres`; left unrated for manual review), Error.
 
 ### Configure wizard (wizard/)
 
