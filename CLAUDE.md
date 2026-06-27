@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## >> ON SESSION START / RESUME: read SESSION-STATE.md FIRST <<
+
+`SESSION-STATE.md` (gitignored, repo root) is the transient resume checkpoint:
+open work items, next actions, and durable key facts (prod paths, Emby IDs/endpoints).
+
 ## Project Overview
 
 Rust CLI (`smpr`) for Emby/Jellyfin parental rating management. Fetches lyrics from the Emby or Jellyfin API, detects explicit content using tiered word detection (R / PG-13), and sets `OfficialRating` on matching audio tracks.
