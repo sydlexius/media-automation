@@ -524,7 +524,9 @@ fn confirm_hard_delete(count: usize) -> Result<bool> {
         "About to PERMANENTLY delete {count} item(s) and their files from disk. \
          This cannot be undone.\nType DELETE to proceed: "
     );
-    std::io::stderr().flush().ok();
+    std::io::stderr()
+        .flush()
+        .map_err(|e| Error::Config(format!("writing confirmation prompt: {e}")))?;
     let mut line = String::new();
     let n = std::io::stdin()
         .read_line(&mut line)

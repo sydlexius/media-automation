@@ -630,15 +630,21 @@ impl Client {
 
     /// Like [`Self::items_batch_get`] but returns the *raw* item JSON values
     /// (full fidelity for delete snapshots). ABS wraps the result in
-    /// `{ "libraryItems": [...] }`; a missing/!-array field yields an empty vec.
+    /// `{ "libraryItems": [...] }`. A missing or non-array `libraryItems` is a
+    /// contract break and surfaces as [`Error::Parse`] - silently returning an
+    /// empty vec would let `batch-delete` no-op (reporting every ID "not found")
+    /// without ever taking the pre-delete snapshot. An empty array is valid.
     pub fn items_batch_get_raw(&self, item_ids: &[&str]) -> Result<Vec<serde_json::Value>> {
         let body = serde_json::json!({ "libraryItemIds": item_ids });
         let resp: serde_json::Value = self.post_json("/api/items/batch/get", &body)?;
-        Ok(resp
-            .get("libraryItems")
+        resp.get("libraryItems")
             .and_then(|v| v.as_array())
             .cloned()
-            .unwrap_or_default())
+            .ok_or_else(|| {
+                Error::Parse(
+                    "POST /api/items/batch/get: missing or non-array libraryItems".to_string(),
+                )
+            })
     }
 
     /// `GET /api/libraries/{library}/search?q=` - in-library search.
@@ -1173,5 +1179,28 @@ mod tests {
             Err(Error::Auth { status }) => assert_eq!(status, 401),
             other => panic!("expected Auth 401, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn batch_get_raw_errors_when_library_items_missing() {
+        // A response without `libraryItems` is a contract break, not "0 items":
+        // it must surface as Parse so batch-delete never silently no-ops.
+        let port = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 14\r\nConnection: close\r\n\r\n{\"other\":true}",
+        );
+        match client_for(port).items_batch_get_raw(&["li_1"]) {
+            Err(Error::Parse(_)) => {}
+            other => panic!("expected Parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn batch_get_raw_allows_empty_array() {
+        // An explicit empty array is a valid "nothing matched" result.
+        let port = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 19\r\nConnection: close\r\n\r\n{\"libraryItems\":[]}",
+        );
+        let got = client_for(port).items_batch_get_raw(&["li_1"]).unwrap();
+        assert!(got.is_empty());
     }
 }
