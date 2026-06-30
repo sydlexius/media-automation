@@ -8,13 +8,16 @@ for shelling out to the third-party `abs-cli`, plus a home for higher-level
 curation logic (ASIN identification, chapter repair, narrator/abridged audits,
 field hygiene, age/AR enrichment).
 
-## Status: reads-first
+## Status
 
-The tool is being built **reads-first** - no implemented command mutates the ABS
-library, so there is currently zero risk to a live library. (`login` and
-`config set` write only the local credential file.) Library-write commands
-(metadata edits, chapter writes, embed/encode) land only after the shared write
-harness (dry-run + backup + ledger) and per-command safety gates exist.
+The tool was built **reads-first**; library-mutating commands now land behind the
+shared write harness (dry-run by default, snapshot-before-write, append-only
+ledger) plus per-command safety gates. Reads (`list`/`get`/`report`/`search`)
+never touch the library. Writes (`items update`/`batch-update`/
+`batch-update-progress`) and deletes (`items delete`/`batch-delete`) require an
+explicit `--apply` to leave dry-run; an irreversible `--hard` delete additionally
+requires a typed `DELETE` confirmation. (`login` and `config set` write only the
+local credential file.)
 
 Implemented today:
 
@@ -26,6 +29,12 @@ Implemented today:
   count, distinct genres/tags/narrators, top genres/tags).
 - `rabsody items list|get|batch-get` - read library items (filter/sort/paginate,
   `--expanded` for audio files + chapters); JSON output.
+- `rabsody items update|batch-update|batch-update-progress` - write item
+  metadata/tags/progress through the shared write harness (dry-run by default;
+  `--apply` to commit; arrays unioned unless `--replace-tags`/`--replace-genres`).
+- `rabsody items delete|batch-delete` - remove items: soft (database record only)
+  by default, `--hard` also deletes files from disk. Dry-run unless `--apply`; an
+  apply-mode `--hard` delete prints every target then requires typing `DELETE`.
 - `rabsody metadata search|providers|covers` - provider metadata lookups (JSON).
 - `rabsody search <query>` - search within the default library (JSON).
 - `rabsody tasks list [--wait]` - list server tasks; `--wait` blocks until the queue

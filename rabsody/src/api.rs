@@ -609,6 +609,15 @@ impl Client {
         self.get_json(&path, &query)
     }
 
+    /// `GET /api/items/{item_id}` returning the *raw* item JSON (not the lean
+    /// typed [`Item`]). Used by delete, where the pre-delete snapshot must
+    /// preserve the whole item - an irreversible op deserves a full-fidelity
+    /// audit record, not the title-only subset [`Item`] keeps.
+    pub fn item_get_raw(&self, item_id: &str) -> Result<serde_json::Value> {
+        let path = format!("/api/items/{}", encode_segment(item_id));
+        self.get_json(&path, &[])
+    }
+
     /// `POST /api/items/batch/get` - fetch multiple items by ID in one request.
     ///
     /// `POST /api/items/batch/get` - fetch many items by ID. ABS wraps the
@@ -617,6 +626,25 @@ impl Client {
         let body = serde_json::json!({ "libraryItemIds": item_ids });
         let resp: BatchGetResponse = self.post_json("/api/items/batch/get", &body)?;
         Ok(resp.library_items)
+    }
+
+    /// Like [`Self::items_batch_get`] but returns the *raw* item JSON values
+    /// (full fidelity for delete snapshots). ABS wraps the result in
+    /// `{ "libraryItems": [...] }`. A missing or non-array `libraryItems` is a
+    /// contract break and surfaces as [`Error::Parse`] - silently returning an
+    /// empty vec would let `batch-delete` no-op (reporting every ID "not found")
+    /// without ever taking the pre-delete snapshot. An empty array is valid.
+    pub fn items_batch_get_raw(&self, item_ids: &[&str]) -> Result<Vec<serde_json::Value>> {
+        let body = serde_json::json!({ "libraryItemIds": item_ids });
+        let resp: serde_json::Value = self.post_json("/api/items/batch/get", &body)?;
+        resp.get("libraryItems")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .ok_or_else(|| {
+                Error::Parse(
+                    "POST /api/items/batch/get: missing or non-array libraryItems".to_string(),
+                )
+            })
     }
 
     /// `GET /api/libraries/{library}/search?q=` - in-library search.
@@ -676,6 +704,41 @@ impl Client {
         read_ok(resp, &url)
     }
 
+    /// Authenticated DELETE (no request body). DELETE is idempotent and carries
+    /// no payload, so this mirrors [`Self::send_get`] without a query/body.
+    fn send_delete(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>> {
+        let token = self.access_token.borrow().clone();
+        Ok(self
+            .agent
+            .delete(url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .call()?)
+    }
+
+    /// DELETE that only validates the HTTP status (no body decode), with the
+    /// transparent token-refresh retry. ABS delete endpoints reply with an empty
+    /// or non-JSON success body, so status is all there is to check.
+    fn delete_ok(&self, path: &str) -> Result<()> {
+        let url = format!("{}{}", self.server, path);
+        let resp = self.send_delete(&url)?;
+        if status_is_auth(&resp) && self.try_refresh()? {
+            return check_ok(self.send_delete(&url)?, &url);
+        }
+        check_ok(resp, &url)
+    }
+
+    /// POST that only validates the HTTP status (no body decode), with the
+    /// transparent token-refresh retry. Mirrors [`Self::patch_ok`] for endpoints
+    /// like batch-delete whose success body is empty/non-JSON.
+    fn post_ok<B: Serialize>(&self, path: &str, body: &B) -> Result<()> {
+        let url = format!("{}{}", self.server, path);
+        let resp = self.send_post(&url, body)?;
+        if status_is_auth(&resp) && self.try_refresh()? {
+            return check_ok(self.send_post(&url, body)?, &url);
+        }
+        check_ok(resp, &url)
+    }
+
     /// The server base URL this client targets (used to label backups/ledger).
     pub fn server(&self) -> &str {
         &self.server
@@ -694,6 +757,32 @@ impl Client {
     /// `POST /api/items/batch/update` - atomic batch metadata update.
     pub fn items_batch_update(&self, updates: &[BatchItemUpdate]) -> Result<BatchUpdateResult> {
         self.post_json("/api/items/batch/update", &updates)
+    }
+
+    /// `DELETE /api/items/{id}` - remove one library item. Soft by default
+    /// (database record only); `hard` appends `?hard=1` so the server also
+    /// removes the item's files from disk (irreversible). The server, not this
+    /// client, owns filesystem removal - RABSody never touches media files.
+    pub fn item_delete(&self, item_id: &str, hard: bool) -> Result<()> {
+        let path = format!(
+            "/api/items/{}{}",
+            encode_segment(item_id),
+            if hard { "?hard=1" } else { "" }
+        );
+        self.delete_ok(&path)
+    }
+
+    /// `POST /api/items/batch/delete` - atomically remove many library items in
+    /// one request. Body is `{"libraryItemIds": [...]}`. `hard` appends `?hard=1`
+    /// so the server also removes each item's files from disk (irreversible).
+    pub fn items_batch_delete(&self, item_ids: &[&str], hard: bool) -> Result<()> {
+        let path = if hard {
+            "/api/items/batch/delete?hard=1"
+        } else {
+            "/api/items/batch/delete"
+        };
+        let body = serde_json::json!({ "libraryItemIds": item_ids });
+        self.post_ok(path, &body)
     }
 
     /// PATCH that only checks status (no JSON decode) - for endpoints that reply
@@ -967,5 +1056,151 @@ mod tests {
         let out = truncate(&long);
         assert!(out.ends_with("..."));
         assert!(out.len() <= 500 + 3);
+    }
+
+    /// Like [`serve_once`] but captures the raw client request (request line +
+    /// headers + any body) so a test can assert the method, path, query, and JSON
+    /// body that were actually sent. Reads in a loop until the full
+    /// `Content-Length` body has arrived - ureq writes headers and body in
+    /// separate segments, so a single `read` can miss the body.
+    fn serve_once_capture(raw: &'static str) -> (u16, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut acc = Vec::new();
+                let mut chunk = [0u8; 1024];
+                loop {
+                    // Stop once headers are complete and the declared body (if
+                    // any) is fully buffered; a body-less request ends at headers.
+                    if let Some(hdr_end) = find_subslice(&acc, b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&acc[..hdr_end]);
+                        let want = content_length(&headers).unwrap_or(0);
+                        if acc.len() >= hdr_end + 4 + want {
+                            break;
+                        }
+                    }
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => acc.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let _ = tx.send(String::from_utf8_lossy(&acc).into_owned());
+                let _ = stream.write_all(raw.as_bytes());
+            }
+        });
+        (port, rx)
+    }
+
+    /// First index of `needle` in `hay`, or `None`.
+    fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+        hay.windows(needle.len()).position(|w| w == needle)
+    }
+
+    /// Parse the `Content-Length` value from a request's header block.
+    fn content_length(headers: &str) -> Option<usize> {
+        headers
+            .lines()
+            .find_map(|l| {
+                l.split_once(':')
+                    .filter(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+            })
+            .and_then(|(_, v)| v.trim().parse().ok())
+    }
+
+    const OK_EMPTY: &str = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    #[test]
+    fn item_delete_soft_sends_plain_delete() {
+        let (port, rx) = serve_once_capture(OK_EMPTY);
+        client_for(port).item_delete("li_1", false).unwrap();
+        let req = rx.recv().unwrap();
+        let line = req.lines().next().unwrap();
+        // Soft delete: DELETE verb, no `?hard` query.
+        assert_eq!(line, "DELETE /api/items/li_1 HTTP/1.1");
+        assert!(!req.contains("hard"));
+    }
+
+    #[test]
+    fn item_delete_hard_appends_hard_query() {
+        let (port, rx) = serve_once_capture(OK_EMPTY);
+        client_for(port).item_delete("li_1", true).unwrap();
+        let line = rx.recv().unwrap().lines().next().unwrap().to_string();
+        assert_eq!(line, "DELETE /api/items/li_1?hard=1 HTTP/1.1");
+    }
+
+    #[test]
+    fn item_delete_encodes_path_segment() {
+        let (port, rx) = serve_once_capture(OK_EMPTY);
+        // A traversal-shaped id must be percent-encoded, never split the path.
+        client_for(port).item_delete("../x", true).unwrap();
+        let line = rx.recv().unwrap().lines().next().unwrap().to_string();
+        assert_eq!(line, "DELETE /api/items/..%2Fx?hard=1 HTTP/1.1");
+    }
+
+    #[test]
+    fn items_batch_delete_posts_ids_and_hard() {
+        let (port, rx) = serve_once_capture(OK_EMPTY);
+        client_for(port)
+            .items_batch_delete(&["li_1", "li_2"], true)
+            .unwrap();
+        let req = rx.recv().unwrap();
+        let line = req.lines().next().unwrap();
+        assert_eq!(line, "POST /api/items/batch/delete?hard=1 HTTP/1.1");
+        // Body carries the IDs under the ABS-expected key.
+        let body = req.split("\r\n\r\n").nth(1).unwrap_or("");
+        let json: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(json["libraryItemIds"], serde_json::json!(["li_1", "li_2"]));
+    }
+
+    #[test]
+    fn item_delete_maps_500_to_http() {
+        let port = serve_once(
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 4\r\nConnection: close\r\n\r\nboom",
+        );
+        match client_for(port).item_delete("li_1", false) {
+            Err(Error::Http { status, body }) => {
+                assert_eq!(status, 500);
+                assert_eq!(body, "boom");
+            }
+            other => panic!("expected Http 500, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_delete_maps_401_to_auth() {
+        let port = serve_once(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+        match client_for(port).item_delete("li_1", true) {
+            Err(Error::Auth { status }) => assert_eq!(status, 401),
+            other => panic!("expected Auth 401, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn batch_get_raw_errors_when_library_items_missing() {
+        // A response without `libraryItems` is a contract break, not "0 items":
+        // it must surface as Parse so batch-delete never silently no-ops.
+        let port = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 14\r\nConnection: close\r\n\r\n{\"other\":true}",
+        );
+        match client_for(port).items_batch_get_raw(&["li_1"]) {
+            Err(Error::Parse(_)) => {}
+            other => panic!("expected Parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn batch_get_raw_allows_empty_array() {
+        // An explicit empty array is a valid "nothing matched" result.
+        let port = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 19\r\nConnection: close\r\n\r\n{\"libraryItems\":[]}",
+        );
+        let got = client_for(port).items_batch_get_raw(&["li_1"]).unwrap();
+        assert!(got.is_empty());
     }
 }
