@@ -26,6 +26,12 @@ Implemented today:
   count, distinct genres/tags/narrators, top genres/tags).
 - `rabsody items list|get|batch-get` - read library items (filter/sort/paginate,
   `--expanded` for audio files + chapters); JSON output.
+- `rabsody items update|batch-update|batch-update-progress` - write item
+  metadata/tags/progress through the shared write harness (dry-run by default;
+  `--apply` to commit; arrays unioned unless `--replace-tags`/`--replace-genres`).
+- `rabsody items delete|batch-delete` - remove items: soft (database record only)
+  by default, `--hard` also deletes files from disk. Dry-run unless `--apply`; an
+  apply-mode `--hard` delete prints every target then requires typing `DELETE`.
 - `rabsody metadata search|providers|covers` - provider metadata lookups (JSON).
 - `rabsody search <query>` - search within the default library (JSON).
 - `rabsody tasks list [--wait]` - list server tasks; `--wait` blocks until the queue
