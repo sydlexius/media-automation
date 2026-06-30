@@ -100,27 +100,28 @@ fn run_free_space(path_flag: Option<String>, json: bool) -> Result<()> {
     }
 }
 
-/// Resolve the path to query: `--path` flag wins; otherwise `[cache].dataPath`
-/// from the native config. With neither, error - there is nothing to measure
-/// (ABS has no disk free-space API).
+/// Resolve the path to query, single source of truth for precedence: the
+/// `--path` flag wins; otherwise `[cache].dataPath` from the native config; with
+/// neither, error (ABS has no server free-space API, so there is nothing to
+/// measure). `--path` short-circuits before the config/credential load, so a
+/// one-off `free-space --path` needs no configured credentials.
 fn resolve_free_space_path(path_flag: Option<String>) -> Result<PathBuf> {
     if let Some(path) = path_flag {
         return Ok(PathBuf::from(path));
     }
-    let configured = Credentials::load()?.config.cache.and_then(|c| c.data_path);
-    pick_path(None, configured).ok_or_else(|| {
-        Error::Config(
-            "no path to query: ABS exposes no server free-space API. Pass --path, \
-             or set `[cache].dataPath` in the config when RABSody is co-located \
-             with the ABS data directory."
-                .to_string(),
-        )
-    })
-}
-
-/// Pure path-precedence: the `--path` flag wins over the configured path.
-fn pick_path(flag: Option<String>, configured: Option<String>) -> Option<PathBuf> {
-    flag.or(configured).map(PathBuf::from)
+    Credentials::load()?
+        .config
+        .cache
+        .and_then(|c| c.data_path)
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            Error::Config(
+                "no path to query: ABS exposes no server free-space API. Pass --path, \
+                 or set `[cache].dataPath` in the config when RABSody is co-located \
+                 with the ABS data directory."
+                    .to_string(),
+            )
+        })
 }
 
 /// Free/total disk space for a local filesystem path. `available` is the space
@@ -164,11 +165,11 @@ impl DiskSpace {
     }
 }
 
-/// Query free disk space for `path` via `statvfs` (the `fs2` crate).
+/// Query free disk space for `path` via `statvfs` (the `fs4` crate).
 pub fn free_space(path: &Path) -> Result<DiskSpace> {
-    let total = fs2::total_space(path)
+    let total = fs4::total_space(path)
         .map_err(|e| Error::Config(format!("querying total space at {}: {e}", path.display())))?;
-    let available = fs2::available_space(path).map_err(|e| {
+    let available = fs4::available_space(path).map_err(|e| {
         Error::Config(format!(
             "querying available space at {}: {e}",
             path.display()
@@ -196,17 +197,6 @@ fn human_bytes(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn pick_path_prefers_flag_then_configured() {
-        assert_eq!(
-            pick_path(Some("a".into()), Some("b".into())),
-            Some(PathBuf::from("a"))
-        );
-        assert_eq!(pick_path(None, Some("b".into())), Some(PathBuf::from("b")));
-        assert_eq!(pick_path(Some("a".into()), None), Some(PathBuf::from("a")));
-        assert_eq!(pick_path(None, None), None);
-    }
 
     #[test]
     fn disk_space_computes_used_and_pct() {
