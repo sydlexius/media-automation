@@ -41,3 +41,6 @@ docs/superpowers/
 
 # Transient session checkpoint (resume state; never committed)
 SESSION-STATE.md
+
+# Playwright MCP browser session artifacts
+.playwright-mcp/
