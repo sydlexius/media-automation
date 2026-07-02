@@ -430,6 +430,7 @@ fn report_csv_output() {
             previous_rating: Some("G".into()),
             action: RatingAction::Set,
             source: Source::Lyrics,
+            has_lyrics: true,
             server_name: "home-emby".into(),
         },
         ItemResult {
@@ -442,6 +443,7 @@ fn report_csv_output() {
             previous_rating: None,
             action: RatingAction::Skipped,
             source: Source::Lyrics,
+            has_lyrics: false,
             server_name: "home-emby".into(),
         },
     ];
@@ -452,7 +454,7 @@ fn report_csv_output() {
     let lines: Vec<&str> = content.lines().collect();
     assert_eq!(
         lines[0],
-        "artist,album,track,tier,matched_words,previous_rating,action,source,server"
+        "artist,album,track,tier,matched_words,previous_rating,action,source,server,has_lyrics"
     );
     assert!(lines[1].contains("Artist"));
     assert!(lines[1].contains("Album"));
@@ -462,8 +464,10 @@ fn report_csv_output() {
     assert!(lines[1].contains("set"));
     assert!(lines[1].contains("lyrics"));
     assert!(lines[1].contains("home-emby"));
+    assert!(lines[1].ends_with("true")); // has_lyrics column
     assert!(lines[2].contains("clean.flac"));
     assert!(lines[2].contains("skipped"));
+    assert!(lines[2].ends_with("false")); // has_lyrics column
 }
 
 #[test]
@@ -471,6 +475,7 @@ fn summary_counts_actions() {
     let results = vec![
         ItemResult {
             item_id: "1".into(),
+            has_lyrics: true,
             path: None,
             artist: None,
             album: None,
@@ -483,6 +488,7 @@ fn summary_counts_actions() {
         },
         ItemResult {
             item_id: "2".into(),
+            has_lyrics: true,
             path: None,
             artist: None,
             album: None,
@@ -495,6 +501,7 @@ fn summary_counts_actions() {
         },
         ItemResult {
             item_id: "3".into(),
+            has_lyrics: false,
             path: None,
             artist: None,
             album: None,
@@ -507,6 +514,7 @@ fn summary_counts_actions() {
         },
         ItemResult {
             item_id: "4".into(),
+            has_lyrics: true,
             path: None,
             artist: None,
             album: None,
@@ -519,6 +527,7 @@ fn summary_counts_actions() {
         },
         ItemResult {
             item_id: "5".into(),
+            has_lyrics: true,
             path: None,
             artist: None,
             album: None,
@@ -531,6 +540,7 @@ fn summary_counts_actions() {
         },
         ItemResult {
             item_id: "6".into(),
+            has_lyrics: false,
             path: None,
             artist: None,
             album: None,
@@ -543,6 +553,7 @@ fn summary_counts_actions() {
         },
         ItemResult {
             item_id: "7".into(),
+            has_lyrics: false,
             path: None,
             artist: None,
             album: None,
@@ -555,6 +566,7 @@ fn summary_counts_actions() {
         },
         ItemResult {
             item_id: "8".into(),
+            has_lyrics: false,
             path: None,
             artist: None,
             album: None,
@@ -565,21 +577,60 @@ fn summary_counts_actions() {
             source: Source::Genre,
             server_name: "s".into(),
         },
+        // #9: clean lyrics, no prior rating -> Skipped. Previously miscounted as
+        // a no-lyrics skip; has_lyrics=true is the signal that fixes it.
+        ItemResult {
+            item_id: "9".into(),
+            has_lyrics: true,
+            path: None,
+            artist: None,
+            album: None,
+            tier: None,
+            matched_words: vec![],
+            previous_rating: None,
+            action: RatingAction::Skipped,
+            source: Source::Lyrics,
+            server_name: "s".into(),
+        },
     ];
     let counts = SummaryCounts::from_results(&results);
-    assert_eq!(counts.lyrics_evaluated, 4); // source=Lyrics, excluding no-lyrics skip (#6)
+    assert_eq!(counts.lyrics_evaluated, 5); // has_lyrics=true: #1,#2,#4,#5,#9
     assert_eq!(counts.r_rated, 2); // tier=R
     assert_eq!(counts.pg13, 1); // tier=PG-13
-    assert_eq!(counts.clean, 1); // source=Lyrics, tier=None, not a no-lyrics skip (#4)
+    assert_eq!(counts.clean, 2); // has_lyrics=true, tier=None: #4 (cleared), #9 (unrated)
+    assert_eq!(counts.no_lyrics, 1); // source=Lyrics, has_lyrics=false: #6
     assert_eq!(counts.ratings_set, 1); // action=Set, source=Lyrics
     assert_eq!(counts.already_correct, 1); // action=AlreadyCorrect, source=Lyrics
     assert_eq!(counts.cleared, 1);
     assert_eq!(counts.g_genre_set, 1); // action=Set, source=Genre
     assert_eq!(counts.g_genre_already, 1); // action=AlreadyCorrect, source=Genre
     assert_eq!(counts.dry_run, 1);
-    assert_eq!(counts.skipped, 1);
+    assert_eq!(counts.skipped, 2); // action=Skipped: #6 (no-lyrics), #9 (clean unrated)
     assert_eq!(counts.needs_review, 1); // action=Review (deny_genres veto), not counted as skipped
     assert_eq!(counts.errors, 0);
+}
+
+#[test]
+fn force_rated_items_excluded_from_lyrics_tier_counts() {
+    // A `force R` item carries tier=Some("R") but has_lyrics=false. The tier
+    // sub-counts print under "Lyrics evaluated", so they must NOT count it (CR #230).
+    let results = vec![ItemResult {
+        item_id: "f1".into(),
+        has_lyrics: false,
+        path: None,
+        artist: None,
+        album: None,
+        tier: Some("R".into()),
+        matched_words: vec![],
+        previous_rating: None,
+        action: RatingAction::Set,
+        source: Source::Force,
+        server_name: "s".into(),
+    }];
+    let counts = SummaryCounts::from_results(&results);
+    assert_eq!(counts.r_rated, 0); // force-rated, not lyrics-evaluated
+    assert_eq!(counts.lyrics_evaluated, 0);
+    assert_eq!(counts.ratings_set, 1); // still counted as a rating set
 }
 
 /// Integration tests — UAT servers only. Gated behind SMPR_UAT_TEST=1.

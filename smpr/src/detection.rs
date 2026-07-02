@@ -373,6 +373,56 @@ mod tests {
     }
 
     #[test]
+    fn default_config_ignores_foreign_shit_slut_collisions() {
+        let engine = default_engine();
+        // Non-English tokens that merely contain `shit`/`slut` as substrings must
+        // not be flagged: romaji `-shite` te-forms, `crashity`, and Scandinavian
+        // `beslut` ("decision"). (Issue #229.)
+        for clean in [
+            "kaoshite the door",
+            "nan demo shitemo ii",
+            "haidashite from the crowd",
+            "the crashity crash of thunder",
+            "vi tog ett beslut idag",
+        ] {
+            assert_eq!(
+                engine.classify_lyrics(clean).0,
+                None,
+                "false positive on {clean:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_config_shit_stem_still_catches_compounds() {
+        let engine = default_engine();
+        // `shit` stays a stem, so productive compounds must still classify R -
+        // the whole reason it was NOT retiered to exact. (Issue #229.)
+        for dirty in ["dipshit", "shitshow", "shittin", "shite", "horseshit"] {
+            assert_eq!(
+                engine.classify_lyrics(dirty).0,
+                Some("R"),
+                "missed shit compound {dirty:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_config_slut_is_exact_pg13() {
+        let engine = default_engine();
+        // `slut` and its inflections are exact PG-13 hits...
+        for dirty in ["slut", "sluts", "slutty", "SLUT!", "what a slut"] {
+            assert_eq!(
+                engine.classify_lyrics(dirty).0,
+                Some("PG-13"),
+                "missed slut {dirty:?}"
+            );
+        }
+        // ...but the substring collision `beslut` is not (word boundary).
+        assert_eq!(engine.classify_lyrics("beslut").0, None);
+    }
+
+    #[test]
     fn default_config_exact_handles_punctuation_and_case() {
         let engine = default_engine();
         // Retiered exact words must still fire across casing and adjacent

@@ -30,6 +30,7 @@ fn write_report_inner(
         "action",
         "source",
         "server",
+        "has_lyrics",
     ])?;
     for r in results {
         let track = r
@@ -47,6 +48,7 @@ fn write_report_inner(
             r.action.as_csv_str(),
             r.source.as_csv_str(),
             &r.server_name,
+            if r.has_lyrics { "true" } else { "false" },
         ])?;
     }
     wtr.flush()?;

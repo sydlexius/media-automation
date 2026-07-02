@@ -89,6 +89,13 @@ pub struct ItemResult {
     pub action: RatingAction,
     pub source: Source,
     pub server_name: String,
+    /// True only when lyrics text was actually fetched and classified for this
+    /// track (an explicit-tier hit or an evaluated-clean track). False for
+    /// genuinely lyric-less tracks and for paths that never fetch lyrics
+    /// (force/reset/genre-only). Distinguishes "no lyrics" from "clean lyrics",
+    /// which otherwise collapse to the same tier/action/source and made lyrics
+    /// coverage unauditable.
+    pub has_lyrics: bool,
 }
 
 /// Resolved library/location scope for a workflow.
@@ -246,6 +253,7 @@ fn rate_item(
             previous_rating: prev.map(String::from),
             action: act,
             source: Source::Force,
+            has_lyrics: false,
             server_name: server_name.to_string(),
         });
     }
@@ -283,6 +291,7 @@ fn rate_item(
                 previous_rating: prev.map(String::from),
                 action: act,
                 source: Source::Lyrics,
+                has_lyrics: true,
                 server_name: server_name.to_string(),
             });
         }
@@ -304,6 +313,7 @@ fn rate_item(
             previous_rating: prev.map(String::from),
             action: act,
             source: Source::Lyrics,
+            has_lyrics: true,
             server_name: server_name.to_string(),
         });
     }
@@ -324,6 +334,7 @@ fn rate_item(
                 previous_rating: prev.map(String::from),
                 action: RatingAction::Review,
                 source: Source::Genre,
+                has_lyrics: false,
                 server_name: server_name.to_string(),
             });
         }
@@ -343,6 +354,7 @@ fn rate_item(
             previous_rating: prev.map(String::from),
             action: act,
             source: Source::Genre,
+            has_lyrics: false,
             server_name: server_name.to_string(),
         });
     }
@@ -358,6 +370,7 @@ fn rate_item(
         previous_rating: prev.map(String::from),
         action: RatingAction::Skipped,
         source: Source::Lyrics,
+        has_lyrics: false,
         server_name: server_name.to_string(),
     })
 }
@@ -422,6 +435,7 @@ pub fn force_workflow(
             previous_rating: prev.map(String::from),
             action: act,
             source: Source::Force,
+            has_lyrics: false,
             server_name: server_config.name.clone(),
         });
     }
@@ -467,6 +481,7 @@ pub fn reset_workflow(
             previous_rating: prev.map(String::from),
             action: act,
             source: Source::Reset,
+            has_lyrics: false,
             server_name: server_config.name.clone(),
         });
     }
@@ -489,6 +504,9 @@ pub struct SummaryCounts {
     pub dry_run: usize,
     pub skipped: usize,
     pub needs_review: usize,
+    /// Tracks in the lyrics path for which no lyrics were found (genuinely
+    /// lyric-less). Distinct from `clean` (lyrics found, no explicit content).
+    pub no_lyrics: usize,
     pub errors: usize,
 }
 
@@ -496,22 +514,29 @@ impl SummaryCounts {
     pub fn from_results(results: &[ItemResult]) -> Self {
         let mut c = Self::default();
         for r in results {
-            // Lyrics evaluated = source is Lyrics, excluding no-lyrics skips.
-            // No-lyrics items have source=Lyrics, tier=None, action=Skipped.
-            let is_lyrics = r.source == Source::Lyrics;
-            let is_no_lyrics_skip =
-                is_lyrics && r.tier.is_none() && matches!(r.action, RatingAction::Skipped);
-            if is_lyrics && !is_no_lyrics_skip {
+            // Lyrics evaluated = lyrics were actually fetched and classified,
+            // driven by the explicit has_lyrics flag rather than inferred from
+            // tier/action (which cannot tell "no lyrics" from "clean lyrics").
+            if r.has_lyrics {
                 c.lyrics_evaluated += 1;
             }
-            // Tier counts
-            match r.tier.as_deref() {
-                Some("R") => c.r_rated += 1,
-                Some("PG-13") => c.pg13 += 1,
-                _ => {}
+            // No lyrics = a track in the lyrics path that had none. This is the
+            // true no-lyrics fallthrough, previously conflated with clean tracks.
+            if r.source == Source::Lyrics && !r.has_lyrics {
+                c.no_lyrics += 1;
             }
-            // Clean = had lyrics but no explicit content (not a no-lyrics skip)
-            if is_lyrics && r.tier.is_none() && !is_no_lyrics_skip {
+            // Tier counts. Scoped to lyrics-evaluated items so the R/PG-13
+            // sub-lines (printed under "Lyrics evaluated") stay consistent with
+            // `clean`/`lyrics_evaluated` and force-rated items don't inflate them.
+            if r.has_lyrics {
+                match r.tier.as_deref() {
+                    Some("R") => c.r_rated += 1,
+                    Some("PG-13") => c.pg13 += 1,
+                    _ => {}
+                }
+            }
+            // Clean = lyrics were evaluated but carried no explicit content.
+            if r.has_lyrics && r.tier.is_none() {
                 c.clean += 1;
             }
             // Action counts by source
@@ -546,6 +571,9 @@ pub fn print_summary(results: &[ItemResult], label: &str) {
         println!("    R-rated:           {}", c.r_rated);
         println!("    PG-13:             {}", c.pg13);
         println!("    Clean:             {}", c.clean);
+    }
+    if c.no_lyrics > 0 {
+        println!("  No lyrics:           {}", c.no_lyrics);
     }
     println!("  Ratings set:         {}", c.ratings_set);
     println!("  Already correct:     {}", c.already_correct);

@@ -117,7 +117,7 @@ Server type detection (`detect_server_type`): `GET /System/Info/Public` (unauthe
 2. Structural: `LocalAddress` (singular) → Jellyfin; `LocalAddresses` (plural) → Emby
 3. `Server` header: "Kestrel" → Jellyfin; other → Emby
 
-Lyrics fetch (Emby): external subtitle streams via `GET /Videos/{id}/{msid}/Subtitles/{idx}/Stream.txt`, fallback to embedded `Extradata`. Lyrics fetch (Jellyfin): `GET /Audio/{id}/Lyrics`, parse structured `LyricsResponse`.
+Lyrics fetch (Emby): `find_emby_lyrics_stream` selects an external subtitle stream with codec `lrc`, `txt`, or `text` (preferring synced `lrc` when both exist; unrelated formats like `srt` are ignored), fetched via `GET /Videos/{id}/{msid}/Subtitles/{idx}/Stream.txt`, fallback to embedded `Extradata`. A marker-only stream (`♪ Instrumental ♪`, detected by `util::is_instrumental_marker`) is treated as no-lyrics, not clean lyrics. Lyrics fetch (Jellyfin): `GET /Audio/{id}/Lyrics`, parse structured `LyricsResponse`.
 
 ### Detection engine (detection.rs)
 
@@ -145,7 +145,7 @@ All three workflows follow the same pattern: resolve library scope → prefetch 
 
 **Library scoping** (`rating/scope.rs`): `resolve_from_libraries` resolves `--library` and `--location` flags against `VirtualFolder` data. `filter_by_location` is a post-prefetch, case-insensitive, separator-normalized path-prefix filter against each item's reported `Path`. When a resolved `--location` filters a non-empty set down to zero, it emits a `log::warn!` (visible at the default log level) naming the prefix used and sample real item path roots, because that almost always means the item paths use a different mount view than the library location (e.g. UNC `\\host\share` vs posix `/share`) rather than a genuinely empty folder. `lookup_force_rating` resolves config-level force ratings with precedence: location > library.
 
-**Result types**: `ItemResult` captures item metadata, tier, matched words, previous rating, action taken, source (Lyrics/Genre/Force/Reset), and server name. `RatingAction` enum: Set, Cleared, Skipped, AlreadyCorrect, DryRun, DryRunClear, Review (genre-G vetoed by `deny_genres`; left unrated for manual review), Error.
+**Result types**: `ItemResult` captures item metadata, tier, matched words, previous rating, action taken, source (Lyrics/Genre/Force/Reset), server name, and `has_lyrics` (true only when lyrics were fetched and classified — distinguishes a lyric-less track from one with clean lyrics, which drives the `Clean` vs `No lyrics` summary counts). `RatingAction` enum: Set, Cleared, Skipped, AlreadyCorrect, DryRun, DryRunClear, Review (genre-G vetoed by `deny_genres`; left unrated for manual review), Error.
 
 ### Configure wizard (wizard/)
 
@@ -163,7 +163,7 @@ Steps 3-5 are skipped when adding a server to an existing config.
 
 ### Report (report.rs)
 
-`write_report` writes a CSV with columns: artist, album, track, tier, matched_words, previous_rating, action, source, server. Creates parent directories if needed. Errors are logged, not fatal.
+`write_report` writes a CSV with columns: artist, album, track, tier, matched_words, previous_rating, action, source, server, has_lyrics. Creates parent directories if needed. Errors are logged, not fatal. `has_lyrics` is true only when lyrics were fetched and classified (distinguishes a genuinely lyric-less track from one with clean lyrics).
 
 ### Utilities (util.rs)
 

@@ -336,7 +336,12 @@ impl MediaServerClient {
             match self.request_text("GET", &path) {
                 Ok(text) => {
                     let cleaned = strip_lrc_tags(&text);
-                    if !cleaned.trim().is_empty() {
+                    // Marker-only streams (`♪ Instrumental ♪`) are instrumental
+                    // sidecars, not lyrics: treat them as no-lyrics so the track
+                    // falls through to the genre path instead of counting as
+                    // clean, evaluated lyrics.
+                    if !cleaned.trim().is_empty() && !crate::util::is_instrumental_marker(&cleaned)
+                    {
                         return Ok(Some(cleaned));
                     }
                 }
@@ -498,10 +503,18 @@ pub fn detect_server_type(url: &str) -> Result<ServerType, MediaServerError> {
     })
 }
 
-/// Find the first external LRC subtitle stream in an Emby item's MediaSources.
+/// Find the best external lyric subtitle stream in an Emby item's MediaSources.
 /// Returns (media_source_id, stream_index) if found.
+///
+/// The upstream lyrics tool writes both synced `.lrc` (Emby codec `lrc`) and
+/// unsynced `.txt` (codec `txt`/`text`) sidecars; Emby exposes both as external
+/// subtitle streams. We accept all three codecs but PREFER `lrc` (synced,
+/// richer) when an item has both. Unrelated external subtitle formats (e.g.
+/// `srt`) are ignored. A candidate missing a numeric `Index` is skipped rather
+/// than aborting the search, so a later valid candidate can still be found.
 pub fn find_emby_lyrics_stream(raw: &Value) -> Option<(String, i64)> {
     let sources = raw.get("MediaSources")?.as_array()?;
+    let mut txt_fallback: Option<(String, i64)> = None;
     for source in sources {
         let Some(media_source_id) = source.get("Id").and_then(|v| v.as_str()) else {
             continue;
@@ -521,14 +534,23 @@ pub fn find_emby_lyrics_stream(raw: &Value) -> Option<(String, i64)> {
                 continue;
             }
             let codec = stream.get("Codec").and_then(|v| v.as_str()).unwrap_or("");
-            if !codec.eq_ignore_ascii_case("lrc") {
+            let is_lrc = codec.eq_ignore_ascii_case("lrc");
+            let is_txt = codec.eq_ignore_ascii_case("txt") || codec.eq_ignore_ascii_case("text");
+            if !is_lrc && !is_txt {
                 continue;
             }
-            let index = stream.get("Index")?.as_i64()?;
-            return Some((media_source_id.to_string(), index));
+            let Some(index) = stream.get("Index").and_then(|v| v.as_i64()) else {
+                continue;
+            };
+            if is_lrc {
+                // Synced lyrics are preferred; return as soon as one is found.
+                return Some((media_source_id.to_string(), index));
+            }
+            // Remember the first txt/text candidate but keep scanning for an lrc.
+            txt_fallback.get_or_insert((media_source_id.to_string(), index));
         }
     }
-    None
+    txt_fallback
 }
 
 /// Extract embedded lyrics from Extradata on internal subtitle streams.

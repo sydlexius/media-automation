@@ -22,3 +22,4 @@ pub mod wizard;
 pub use config::DetectionConfig;
 pub use detection::DetectionEngine;
 pub use util::strip_lrc_tags;
+pub use util::{INSTRUMENTAL_MARKER, is_instrumental_marker};
