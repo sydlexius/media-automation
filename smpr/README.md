@@ -171,8 +171,13 @@ smpr rate --server home-emby --library Music
 4. **Apply** — sets `OfficialRating` on the track via the server API
 5. **Report** — optionally writes a CSV with every decision made
 
-False positives are handled by a configurable ignore list (e.g., "cocktail",
-"hancock", "documentary" won't trigger on "cock" or "cum" stems).
+Detection words come in two forms: **stems** match as substrings (so `fuck`
+catches `motherfucker`), while **exact** words match only on whole-word
+boundaries. Words that collide with innocent substrings - `cock`, `cum`, `pussy`,
+and `slut` (e.g. `peacock`, `tecum`, `pussycat`, `beslut`) - are exact entries so
+they never trigger on those. The remaining genuine stems (`fuck`, `shit`,
+`bitch`, `whore`) rely on a configurable ignore list for their rarer collisions
+(e.g. "cocktail", "hancock", "shiitake", romaji `-shite` forms).
 
 ## Development
 

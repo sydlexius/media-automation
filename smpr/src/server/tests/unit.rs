@@ -403,3 +403,77 @@ fn emby_non_lrc_external_subtitle_skipped() {
     });
     assert!(find_emby_lyrics_stream(&raw).is_none());
 }
+
+#[test]
+fn emby_find_external_txt_stream() {
+    // Unsynced lyrics are served as a `txt`-codec external subtitle stream.
+    let raw = serde_json::json!({
+        "Id": "9001",
+        "MediaSources": [{
+            "Id": "ms_9001",
+            "MediaStreams": [
+                {"Codec": "mp3", "Type": "Audio", "Index": 0, "IsExternal": false},
+                {"Codec": "txt", "Type": "Subtitle", "Index": 2, "IsExternal": true,
+                 "Path": "/music/test.txt"}
+            ]
+        }]
+    });
+    let (media_source_id, stream_index) = find_emby_lyrics_stream(&raw).unwrap();
+    assert_eq!(media_source_id, "ms_9001");
+    assert_eq!(stream_index, 2);
+}
+
+#[test]
+fn emby_find_external_text_codec_stream() {
+    let raw = serde_json::json!({
+        "Id": "9002",
+        "MediaSources": [{
+            "Id": "ms_9002",
+            "MediaStreams": [
+                {"Codec": "text", "Type": "Subtitle", "Index": 1, "IsExternal": true}
+            ]
+        }]
+    });
+    let (media_source_id, stream_index) = find_emby_lyrics_stream(&raw).unwrap();
+    assert_eq!(media_source_id, "ms_9002");
+    assert_eq!(stream_index, 1);
+}
+
+#[test]
+fn emby_prefers_lrc_over_txt() {
+    // Both sidecars present (txt listed first): the synced lrc must win.
+    let raw = serde_json::json!({
+        "Id": "9003",
+        "MediaSources": [{
+            "Id": "ms_9003",
+            "MediaStreams": [
+                {"Codec": "txt", "Type": "Subtitle", "Index": 1, "IsExternal": true},
+                {"Codec": "lrc", "Type": "Subtitle", "Index": 2, "IsExternal": true}
+            ]
+        }]
+    });
+    let (_, stream_index) = find_emby_lyrics_stream(&raw).unwrap();
+    assert_eq!(
+        stream_index, 2,
+        "expected the lrc stream (index 2) to be preferred"
+    );
+}
+
+#[test]
+fn emby_candidate_missing_index_does_not_abort_search() {
+    // A malformed lrc candidate lacking Index must not prevent finding a valid
+    // later txt candidate.
+    let raw = serde_json::json!({
+        "Id": "9004",
+        "MediaSources": [{
+            "Id": "ms_9004",
+            "MediaStreams": [
+                {"Codec": "lrc", "Type": "Subtitle", "IsExternal": true},
+                {"Codec": "txt", "Type": "Subtitle", "Index": 3, "IsExternal": true}
+            ]
+        }]
+    });
+    let (media_source_id, stream_index) = find_emby_lyrics_stream(&raw).unwrap();
+    assert_eq!(media_source_id, "ms_9004");
+    assert_eq!(stream_index, 3);
+}

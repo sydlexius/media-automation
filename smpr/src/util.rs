@@ -27,6 +27,26 @@ pub fn strip_lrc_tags(text: &str) -> String {
     text.to_string()
 }
 
+/// The marker the upstream lyrics tool writes as the sole content of an
+/// instrumental sidecar (a `.txt`/`.lrc` external subtitle stream). See
+/// `is_instrumental_marker`.
+pub const INSTRUMENTAL_MARKER: &str = "♪ Instrumental ♪";
+
+/// Returns true when `text` is *only* the instrumental marker, tolerating
+/// surrounding whitespace, letter case, and the musical-note glyphs. Used so a
+/// marker-only lyrics stream is treated as "no lyrics" (the track is
+/// instrumental) rather than as clean, evaluated lyrics.
+///
+/// Returns false when any genuine lyric content sits alongside the marker, so a
+/// real song is never suppressed.
+pub fn is_instrumental_marker(text: &str) -> bool {
+    let without_notes: String = text
+        .chars()
+        .filter(|c| !matches!(c, '♪' | '♫' | '♬' | '♩'))
+        .collect();
+    without_notes.trim().eq_ignore_ascii_case("instrumental")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,6 +77,28 @@ mod tests {
     #[test]
     fn empty_input() {
         assert_eq!(strip_lrc_tags(""), "");
+    }
+
+    #[test]
+    fn instrumental_marker_exact() {
+        assert!(is_instrumental_marker(INSTRUMENTAL_MARKER));
+    }
+
+    #[test]
+    fn instrumental_marker_whitespace_and_case() {
+        assert!(is_instrumental_marker("  \n♪ INSTRUMENTAL ♪\n  "));
+        assert!(is_instrumental_marker("instrumental"));
+        assert!(is_instrumental_marker("♫ Instrumental ♬"));
+    }
+
+    #[test]
+    fn instrumental_marker_rejects_real_lyrics() {
+        // The word appears, but alongside genuine lyric lines -> not a marker.
+        assert!(!is_instrumental_marker(
+            "This is an instrumental break\nbut the song has words"
+        ));
+        assert!(!is_instrumental_marker("Hello world"));
+        assert!(!is_instrumental_marker(""));
     }
 
     #[test]
