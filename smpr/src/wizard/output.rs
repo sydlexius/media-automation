@@ -155,6 +155,7 @@ fn build_raw_config(
         detection: detection_section,
         general,
         report: existing.and_then(|e| e.report.clone()),
+        overrides: existing.and_then(|e| e.overrides.clone()),
     }
 }
 
