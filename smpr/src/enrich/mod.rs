@@ -127,10 +127,12 @@ fn normalize_path(path: &str) -> String {
 /// any source wins (highest confidence among those), else the highest-confidence
 /// match overall.
 pub fn reconcile(matches: Vec<SourceMatch>) -> Option<SourceMatch> {
+    // A NaN confidence sorts as Less so it can never win max_by (a match with an
+    // invalid score must not be selected over a valid one).
     let by_conf = |a: &&SourceMatch, b: &&SourceMatch| {
         a.confidence
             .partial_cmp(&b.confidence)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .unwrap_or(std::cmp::Ordering::Less)
     };
     matches
         .iter()
@@ -247,7 +249,7 @@ pub fn enrich_workflow(
     client: &MediaServerClient,
     config: &Config,
     server_config: &ServerConfig,
-    store: &SourceStore,
+    store: Option<&SourceStore>,
     report_only: bool,
     refresh: bool,
 ) -> Result<(EnrichSummary, Vec<EnrichRow>), MediaServerError> {
@@ -269,7 +271,10 @@ pub fn enrich_workflow(
         // mode always processes so the calibration view is complete. A store
         // read error is logged (not silently treated as a miss) and falls
         // through to re-querying.
-        if !report_only && !refresh {
+        if !report_only
+            && !refresh
+            && let Some(store) = store
+        {
             match store.get(&key) {
                 Ok(Some(_)) => {
                     summary.cached_skipped += 1;
@@ -289,7 +294,7 @@ pub fn enrich_workflow(
         match &chosen {
             Some(m) => {
                 summary.matched += 1;
-                if !report_only {
+                if !report_only && let Some(store) = store {
                     let record = verdict_record(&key, item, &query, m, &server_config.name);
                     if let Err(e) = store.upsert(&record) {
                         log::warn!("enrich: store upsert failed for '{key}': {e}");

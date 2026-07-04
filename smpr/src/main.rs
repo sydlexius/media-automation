@@ -202,14 +202,20 @@ fn resolve_server_type(sc: &config::ServerConfig) -> Result<config::ServerType, 
 /// (used by rate/force/reset) can't silently flip enrich into report-only.
 fn run_enrich(cfg: &config::Config, report_path: Option<PathBuf>, refresh: bool) {
     let report_only = report_path.is_some();
-    let store = match store::SourceStore::open(&cfg.sources.store_path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!(
-                "Error: failed to open source store at {}: {e}",
-                cfg.sources.store_path.display()
-            );
-            process::exit(1);
+    // Report-only runs never touch the store, so don't open (or create) it -
+    // a read-only / unwritable store path must not fail a calibration pass.
+    let store = if report_only {
+        None
+    } else {
+        match store::SourceStore::open(&cfg.sources.store_path) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!(
+                    "Error: failed to open source store at {}: {e}",
+                    cfg.sources.store_path.display()
+                );
+                process::exit(1);
+            }
         }
     };
 
@@ -231,7 +237,14 @@ fn run_enrich(cfg: &config::Config, report_path: Option<PathBuf>, refresh: bool)
             server_config.api_key.clone(),
             server_type,
         );
-        match enrich::enrich_workflow(&client, cfg, server_config, &store, report_only, refresh) {
+        match enrich::enrich_workflow(
+            &client,
+            cfg,
+            server_config,
+            store.as_ref(),
+            report_only,
+            refresh,
+        ) {
             Ok((s, r)) => {
                 summary.matched += s.matched;
                 summary.no_match += s.no_match;
@@ -253,7 +266,10 @@ fn run_enrich(cfg: &config::Config, report_path: Option<PathBuf>, refresh: bool)
                 rows.len(),
                 path.display()
             ),
-            Err(e) => eprintln!("Error: writing enrich report failed: {e}"),
+            Err(e) => {
+                eprintln!("Error: writing enrich report failed: {e}");
+                had_failure = true;
+            }
         }
     }
 
